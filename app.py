@@ -32,7 +32,7 @@ EURI_API_URL = "https://api.euron.one/api/v1/euri/chat/completions"
 try:
     EURI_API_KEY = st.secrets["EURI_API_KEY"]
 except (KeyError, FileNotFoundError):
-    st.error("❌ EURI_API_KEY not found. Please add it to your Streamlit secrets.")
+    st.error("⚠️ EURI_API_KEY not found. Please add it to your Streamlit secrets.")
     st.info("Add your API key to `.streamlit/secrets.toml` file or Streamlit Cloud secrets.")
     st.stop()
 
@@ -45,6 +45,10 @@ if 'scraped_jobs' not in st.session_state:
     st.session_state.scraped_jobs = []
 if 'ai_jobs' not in st.session_state:
     st.session_state.ai_jobs = []
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'chat_messages' not in st.session_state:
+    st.session_state.chat_messages = []
 
 # --- Constants ---
 HEADERS = {
@@ -60,6 +64,60 @@ TIME_FILTERS = {
     "Last week": "qdr:w",
     "Last 2 weeks": "qdr:w2", 
     "Last month": "qdr:m"
+}
+
+# Countries and their common job search terms
+COUNTRIES = {
+    "United States": {
+        "code": "US",
+        "job_sites": ["linkedin.com/jobs", "indeed.com", "glassdoor.com", "monster.com"],
+        "search_terms": ["jobs", "careers", "hiring", "employment"]
+    },
+    "United Kingdom": {
+        "code": "UK",
+        "job_sites": ["linkedin.com/jobs", "indeed.co.uk", "totaljobs.com", "reed.co.uk"],
+        "search_terms": ["jobs", "careers", "vacancies", "positions"]
+    },
+    "Canada": {
+        "code": "CA",
+        "job_sites": ["linkedin.com/jobs", "indeed.ca", "workopolis.com", "monster.ca"],
+        "search_terms": ["jobs", "careers", "employment", "opportunities"]
+    },
+    "Australia": {
+        "code": "AU",
+        "job_sites": ["linkedin.com/jobs", "seek.com.au", "indeed.com.au", "careerone.com.au"],
+        "search_terms": ["jobs", "careers", "positions", "vacancies"]
+    },
+    "Germany": {
+        "code": "DE",
+        "job_sites": ["linkedin.com/jobs", "xing.com", "stepstone.de", "indeed.de"],
+        "search_terms": ["jobs", "stellen", "karriere", "arbeit"]
+    },
+    "France": {
+        "code": "FR",
+        "job_sites": ["linkedin.com/jobs", "indeed.fr", "apec.fr", "monster.fr"],
+        "search_terms": ["emploi", "travail", "carrières", "postes"]
+    },
+    "India": {
+        "code": "IN",
+        "job_sites": ["linkedin.com/jobs", "naukri.com", "indeed.co.in", "monster.co.in"],
+        "search_terms": ["jobs", "careers", "naukri", "employment"]
+    },
+    "Singapore": {
+        "code": "SG",
+        "job_sites": ["linkedin.com/jobs", "indeed.sg", "jobsbank.gov.sg", "monster.com.sg"],
+        "search_terms": ["jobs", "careers", "positions", "vacancies"]
+    },
+    "Netherlands": {
+        "code": "NL",
+        "job_sites": ["linkedin.com/jobs", "indeed.nl", "nationale-vacaturebank.nl", "monster.nl"],
+        "search_terms": ["vacatures", "banen", "werk", "carrière"]
+    },
+    "Japan": {
+        "code": "JP",
+        "job_sites": ["linkedin.com/jobs", "indeed.com", "rikunabi.com", "mynavi.jp"],
+        "search_terms": ["jobs", "求人", "転職", "採用"]
+    }
 }
 
 # Enhanced industry and domain options
@@ -115,45 +173,6 @@ INDUSTRIES = {
                    "Public Administration", "Social Services", "Advocacy", "Research"],
         "keywords": ["nonprofit", "government", "public service", "policy", "social", "community"]
     }
-}
-
-# Job board and ATS sites with better search patterns
-JOB_SITES = {
-    "ats_sites": [
-        "greenhouse.io",
-        "lever.co", 
-        "ashbyhq.com",
-        "pinpointhq.com",
-        "workday.com",
-        "bamboohr.com",
-        "smartrecruiters.com",
-        "jobvite.com"
-    ],
-    "company_sites": [
-        "careers.google.com",
-        "jobs.netflix.com",
-        "amazon.jobs",
-        "careers.microsoft.com",
-        "jobs.apple.com",
-        "careers.salesforce.com",
-        "jobs.facebook.com",
-        "careers.uber.com",
-        "careers.airbnb.com"
-    ],
-    "job_boards": [
-        "linkedin.com/jobs",
-        "indeed.com",
-        "glassdoor.com/Jobs",
-        "monster.com",
-        "ziprecruiter.com"
-    ],
-    "remote_sites": [
-        "remote.co",
-        "remoteok.io",
-        "weworkremotely.com",
-        "flexjobs.com",
-        "remoterocketship.com"
-    ]
 }
 
 # --- Utility Functions ---
@@ -368,8 +387,8 @@ def generate_resume_insights(resume_data, selected_industry=None):
         return extract_json_from_response(response_text)
     return None
 
-def search_jobs_with_ai(job_title, location, industry=None, domain=None, resume_data=None):
-    """Search for jobs using EURI AI with industry and resume matching."""
+def search_jobs_with_ai(job_title, country, city="", industry=None, domain=None, resume_data=None):
+    """Search for jobs using EURI AI with country-specific context."""
     resume_context = ""
     if resume_data:
         resume_context = f"""
@@ -390,33 +409,41 @@ def search_jobs_with_ai(job_title, location, industry=None, domain=None, resume_
         Industry Keywords: {', '.join(INDUSTRIES.get(industry, {}).get('keywords', []))}
         """
     
+    country_info = COUNTRIES.get(country, {})
+    location_str = f"{city}, {country}" if city else country
+    
     prompt = f"""
-    Generate 12 realistic and diverse job listings for "{job_title}" positions in "{location}".
+    Generate 12 realistic and diverse job listings for "{job_title}" positions in "{location_str}".
     {resume_context}
     {industry_context}
     
+    Country Context: {country}
+    Country Code: {country_info.get('code', 'N/A')}
+    
     Make the jobs realistic with:
-    - Real company names from {industry if industry else 'various industries'} (mix of startups, mid-size, and enterprises)
-    - Accurate salary ranges for the location and role
+    - Real company names from {industry if industry else 'various industries'} with presence in {country}
+    - Accurate salary ranges for {country} market in local currency
     - Realistic job descriptions with current industry trends
     - Relevant requirements and qualifications for {domain if domain else 'the role'}
     - Mix of experience levels (entry, mid, senior)
     - Different company sizes and industries
     - Industry-specific technologies and skills
+    - Country-specific benefits and work culture
     
     Return JSON with key "jobs" containing an array of job objects:
     - "id": unique string
     - "title": string  
-    - "company": string (real company name)
-    - "location": string
+    - "company": string (real company name with presence in {country})
+    - "location": string ({location_str})
+    - "country": string ({country})
     - "type": string (Full-time/Part-time/Contract)
-    - "remote_type": string (Remote/Hybrid/On-site)
-    - "salary_min": number
-    - "salary_max": number
+    - "salary_min": number (in local currency)
+    - "salary_max": number (in local currency)
+    - "currency": string (local currency code)
     - "description": string (150-200 words with realistic details)
     - "requirements": array of 5-8 realistic requirements
     - "preferred_qualifications": array of 3-5 preferred skills
-    - "benefits": array of 4-6 benefits
+    - "benefits": array of 4-6 benefits (country-specific)
     - "posted_date": string (recent date)
     - "match_score": number (70-98, higher if resume provided and matches)
     - "match_reasons": array of strings (why it matches user's profile)
@@ -424,6 +451,7 @@ def search_jobs_with_ai(job_title, location, industry=None, domain=None, resume_
     - "industry": string
     - "domain": string (specific domain within industry)
     - "key_technologies": array of relevant technologies
+    - "visa_sponsorship": boolean (true if company typically sponsors visas)
     
     IMPORTANT: Return ONLY a valid JSON object.
     """
@@ -434,78 +462,63 @@ def search_jobs_with_ai(job_title, location, industry=None, domain=None, resume_
     return None
 
 # --- Enhanced Web Scraping Functions ---
-def create_job_search_queries(job_title, location_type, location_text, industry, domain, time_filter):
-    """Create comprehensive search queries for job scraping."""
+def create_country_job_queries(job_title, country, city="", industry=None, time_filter="qdr:d"):
+    """Create country-specific search queries for job scraping."""
     queries = []
     
-    # Base job title with location
-    location_query = ""
-    if location_type == "Remote":
-        location_query = "remote work from home"
-    elif location_type == "Hybrid" and location_text:
-        location_query = f"hybrid \"{location_text}\""  
-    elif location_type == "On-site" and location_text:
-        location_query = f"\"{location_text}\" onsite"
+    country_info = COUNTRIES.get(country, {})
+    search_terms = country_info.get('search_terms', ['jobs'])
+    job_sites = country_info.get('job_sites', ['linkedin.com/jobs'])
     
-    # Industry-specific keywords
+    # Location query
+    location_query = f'"{country}"'
+    if city:
+        location_query = f'"{city}" "{country}"'
+    
+    # Industry keywords
     industry_keywords = []
     if industry and industry in INDUSTRIES:
-        industry_keywords = INDUSTRIES[industry]['keywords']
+        industry_keywords = INDUSTRIES[industry]['keywords'][:3]  # Limit to 3 keywords
     
-    # Create queries for different site types
-    all_sites = (JOB_SITES['ats_sites'] + JOB_SITES['company_sites'] + 
-                JOB_SITES['job_boards'])
-    
-    # Add remote sites if applicable
-    if location_type == "Remote":
-        all_sites.extend(JOB_SITES['remote_sites'])
-    
-    # Limit to prevent overwhelming
-    selected_sites = all_sites[:10]
-    
-    for site in selected_sites:
+    # Create queries for country-specific job sites
+    for site in job_sites[:5]:  # Limit to top 5 sites
         # Basic job title query
-        base_query = f'"{job_title}" site:{site} {location_query} apply'
-        queries.append(base_query.strip())
-        
-        # Industry-specific query
-        if industry_keywords:
-            for keyword in industry_keywords[:2]:  # Limit keywords
-                industry_query = f'"{job_title}" {keyword} site:{site} {location_query}'
+        for term in search_terms[:2]:  # Limit to 2 search terms
+            base_query = f'"{job_title}" site:{site} {location_query} {term} apply'
+            queries.append(base_query.strip())
+    
+    # Add industry-specific queries
+    if industry_keywords:
+        for keyword in industry_keywords:
+            for site in job_sites[:3]:
+                industry_query = f'"{job_title}" {keyword} site:{site} {location_query} hiring'
                 queries.append(industry_query.strip())
     
-    # Add general queries without site restriction
+    # General queries without site restriction
     general_queries = [
-        f'"{job_title}" {location_query} jobs "apply now"',
-        f'"{job_title}" {location_query} careers hiring',
+        f'"{job_title}" {location_query} {search_terms[0]} "apply now"',
+        f'"{job_title}" {location_query} careers hiring 2024',
         f'"{job_title}" {location_query} "we\'re hiring"'
     ]
-    
-    # Add industry-specific general queries
-    if industry_keywords:
-        for keyword in industry_keywords[:2]:
-            general_queries.append(f'"{job_title}" {keyword} {location_query} jobs')
-    
     queries.extend(general_queries)
     
-    # Remove duplicates and limit total queries
-    unique_queries = list(set(queries))[:15]  # Limit to 15 queries
+    # Remove duplicates and limit
+    unique_queries = list(set(queries))[:12]  # Limit to 12 queries
     return unique_queries
 
 def enhanced_google_scraper(search_query, time_filter="qdr:d"):
     """Enhanced Google scraper with better result extraction."""
     try:
         encoded_query = quote_plus(search_query)
-        search_url = f"https://www.google.com/search?q={encoded_query}&tbs={time_filter}&num=20"
+        search_url = f"https://www.google.com/search?q={encoded_query}&tbs={time_filter}&num=15"
         
         # Add random delay to avoid rate limiting
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(1.5, 3.5))
         
-        # Use session for better handling
         session = requests.Session()
         session.headers.update(HEADERS)
         
-        response = session.get(search_url, timeout=15)
+        response = session.get(search_url, timeout=20)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -522,63 +535,76 @@ def enhanced_google_scraper(search_query, time_filter="qdr:d"):
         results = []
         for selector in result_selectors:
             results = soup.select(selector)
-            if len(results) > 3:  # Found meaningful results
+            if len(results) > 2:
                 break
         
-        for result in results[:12]:  # Limit per query
+        for result in results[:10]:  # Process up to 10 results per query
             try:
-                # Find title
+                # Find title and link
                 title_elem = result.find('h3')
-                if not title_elem:
+                link_elem = result.find('a')
+                
+                if not title_elem or not link_elem:
+                    continue
+                    
+                link = link_elem.get('href', '')
+                if not link.startswith('http'):
                     continue
                 
-                # Find link
-                link_elem = result.find('a')
-                if not link_elem or not link_elem.get('href', '').startswith('http'):
-                    continue
+                title = title_elem.get_text(strip=True)
                 
                 # Find snippet/description
                 snippet_elem = (
-                    result.find('span', class_=lambda x: x and 'aCOpRe' in x) or
-                    result.find('div', class_=lambda x: x and 'VwiC3b' in x) or
-                    result.find('div', class_=lambda x: x and 'IsZvec' in x) or
-                    result.find('span', class_=lambda x: x and 'st' in x)
+                    result.find('span', class_=lambda x: x and any(cls in str(x) for cls in ['aCOpRe', 'VwiC3b', 'IsZvec', 'st'])) or
+                    result.find('div', class_=lambda x: x and any(cls in str(x) for cls in ['VwiC3b', 'IsZvec', 's3v9rd']))
                 )
                 
-                title = title_elem.get_text(strip=True)
-                link = link_elem['href']
                 snippet = snippet_elem.get_text(strip=True) if snippet_elem else "No description available."
                 
-                # Filter for job-related content
-                job_indicators = ['job', 'career', 'position', 'hiring', 'vacancy', 'employment', 'work', 'opportunity']
+                # Enhanced job filtering
+                job_indicators = ['job', 'career', 'position', 'hiring', 'vacancy', 'employment', 'work', 'opportunity', 'apply', 'recruit']
                 title_lower = title.lower()
                 link_lower = link.lower()
+                snippet_lower = snippet.lower()
                 
                 is_job_related = (
                     any(indicator in title_lower for indicator in job_indicators) or
                     any(indicator in link_lower for indicator in job_indicators) or
-                    'apply' in title_lower or
-                    'apply' in link_lower
+                    any(indicator in snippet_lower for indicator in job_indicators[:5])  # Check fewer indicators in snippet
                 )
                 
-                if is_job_related and len(title) > 10:  # Basic quality filter
-                    # Determine source from URL
+                # Quality filters
+                if (is_job_related and 
+                    len(title) > 10 and 
+                    len(title) < 150 and  # Not too long
+                    not any(spam in title_lower for spam in ['free', 'easy money', 'work from home scam'])):
+                    
+                    # Determine source
                     source = "Unknown"
-                    for site_category in JOB_SITES.values():
-                        for site in site_category:
-                            if site.split('.')[0] in link_lower:
-                                source = site.split('.')[0].title()
-                                break
-                        if source != "Unknown":
+                    domain_indicators = {
+                        'linkedin': 'LinkedIn',
+                        'indeed': 'Indeed',
+                        'glassdoor': 'Glassdoor',
+                        'monster': 'Monster',
+                        'greenhouse': 'Greenhouse',
+                        'lever': 'Lever',
+                        'workday': 'Workday',
+                        'bamboohr': 'BambooHR',
+                        'careers': 'Company Career Page'
+                    }
+                    
+                    for indicator, source_name in domain_indicators.items():
+                        if indicator in link_lower:
+                            source = source_name
                             break
                     
                     jobs.append({
                         "title": title,
                         "link": link,
-                        "snippet": snippet[:300] + "..." if len(snippet) > 300 else snippet,
+                        "snippet": snippet[:400] + "..." if len(snippet) > 400 else snippet,
                         "source": source,
                         "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "query": search_query
+                        "query": search_query[:50] + "..." if len(search_query) > 50 else search_query
                     })
                     
             except Exception as e:
@@ -594,45 +620,38 @@ def enhanced_google_scraper(search_query, time_filter="qdr:d"):
         logger.error(f"Unexpected error in scraping: {e}")
         return []
 
-def run_enhanced_job_scraper(job_title, location_type, location_text="", industry=None, domain=None, time_duration="Last 24 hours"):
-    """Enhanced job scraping with industry focus and better error handling."""
+def run_enhanced_job_scraper(job_title, country, city="", industry=None, time_duration="Last 24 hours"):
+    """Enhanced job scraping with country focus."""
     time_filter = TIME_FILTERS.get(time_duration, "qdr:d")
     
-    # Create comprehensive search queries
-    search_queries = create_job_search_queries(
-        job_title, location_type, location_text, industry, domain, time_filter
-    )
+    search_queries = create_country_job_queries(job_title, country, city, industry, time_filter)
     
     all_jobs = []
     completed_queries = 0
     total_queries = len(search_queries)
     
-    # Create progress placeholder
     progress_placeholder = st.empty()
     
-    # Use ThreadPoolExecutor for concurrent scraping with limited workers
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    # Use ThreadPoolExecutor with limited workers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_query = {}
         
-        # Submit all scraping tasks
         for query in search_queries:
             future = executor.submit(enhanced_google_scraper, query, time_filter)
             future_to_query[future] = query
         
-        # Collect results as they complete
-        for future in concurrent.futures.as_completed(future_to_query, timeout=120):
+        for future in concurrent.futures.as_completed(future_to_query, timeout=150):
             query = future_to_query[future]
             completed_queries += 1
             
-            # Update progress
             progress = completed_queries / total_queries
             progress_placeholder.progress(
                 progress, 
-                text=f"Searching... {completed_queries}/{total_queries} sources checked"
+                text=f"Searching {country}... {completed_queries}/{total_queries} sources checked"
             )
             
             try:
-                jobs = future.result(timeout=20)
+                jobs = future.result(timeout=25)
                 if jobs:
                     all_jobs.extend(jobs)
                     logger.info(f"Found {len(jobs)} jobs from: {query}")
@@ -642,106 +661,159 @@ def run_enhanced_job_scraper(job_title, location_type, location_text="", industr
             except Exception as exc:
                 logger.warning(f'Query "{query}" generated exception: {exc}')
     
-    # Clear progress
     progress_placeholder.empty()
     
-    # Enhanced deduplication and filtering
+    # Enhanced deduplication
     unique_jobs = {}
     for job in all_jobs:
-        # Create hash based on title and company (extracted from title or link)
         title_clean = job['title'].lower().strip()
         link_clean = job['link'].lower()
         
-        # Try to extract company from title or link
+        # Create better hash for deduplication
         company_identifier = ""
         if " at " in title_clean:
             company_identifier = title_clean.split(" at ")[-1]
         elif "careers." in link_clean:
             company_identifier = link_clean.split("careers.")[1].split(".")[0]
+        elif job['source'] != "Unknown":
+            company_identifier = job['source'].lower()
         
         job_hash = hashlib.md5(
-            (title_clean + company_identifier + job['link']).encode()
+            (title_clean[:50] + company_identifier + job['source']).encode()
         ).hexdigest()
         
-        # Keep the job with better source if duplicate
         if job_hash not in unique_jobs:
             unique_jobs[job_hash] = job
         else:
-            # Keep job from better source
+            # Keep job with better source
             existing_source = unique_jobs[job_hash]['source'].lower()
             new_source = job['source'].lower()
             
-            preferred_sources = ['greenhouse', 'lever', 'linkedin', 'indeed']
+            preferred_sources = ['greenhouse', 'lever', 'linkedin', 'company career page', 'indeed']
             if any(source in new_source for source in preferred_sources):
-                unique_jobs[job_hash] = job
+                if not any(source in existing_source for source in preferred_sources):
+                    unique_jobs[job_hash] = job
     
     final_jobs = list(unique_jobs.values())
     
-    # Enhanced relevance scoring
+    # Relevance scoring
     def calculate_relevance_score(job):
+        score = 0
         title_lower = job['title'].lower()
         job_title_lower = job_title.lower()
         snippet_lower = job['snippet'].lower()
-        score = 0
         
         # Exact title match
         if job_title_lower in title_lower:
-            score += 20
+            score += 25
         
-        # Word matches in title
+        # Word matches
         job_words = job_title_lower.split()
-        title_words = title_lower.split()
-        
         for word in job_words:
-            if len(word) > 2:  # Skip very short words
-                if word in title_words:
-                    score += 10
-                elif word in title_lower:
-                    score += 5
+            if len(word) > 2:
+                if word in title_lower:
+                    score += 8
+                elif word in snippet_lower:
+                    score += 3
+        
+        # Country relevance
+        if country.lower() in title_lower or country.lower() in snippet_lower:
+            score += 5
         
         # Industry relevance
         if industry and industry in INDUSTRIES:
             industry_keywords = INDUSTRIES[industry]['keywords']
             for keyword in industry_keywords:
                 if keyword in title_lower or keyword in snippet_lower:
-                    score += 3
+                    score += 4
         
         # Source quality bonus
         source_lower = job['source'].lower()
-        if source_lower in ['greenhouse', 'lever', 'linkedin']:
-            score += 5
-        elif source_lower in ['indeed', 'glassdoor']:
-            score += 3
+        if 'linkedin' in source_lower:
+            score += 8
+        elif any(x in source_lower for x in ['greenhouse', 'lever', 'company career']):
+            score += 6
+        elif 'indeed' in source_lower:
+            score += 4
         
         # Penalize very long titles (likely spam)
-        if len(job['title']) > 100:
-            score -= 5
+        if len(job['title']) > 120:
+            score -= 8
         
-        return max(0, score)  # Ensure non-negative
+        return max(0, score)
     
     # Sort by relevance score
     final_jobs.sort(key=calculate_relevance_score, reverse=True)
     
     return final_jobs
 
+# --- Chat Functions ---
+def chat_about_resume(user_message, resume_data=None):
+    """Handle chat queries about the user's resume."""
+    if not resume_data:
+        return "I'd be happy to help you with your resume! Please upload your resume first in the Resume Analyzer section, and then I can answer specific questions about it."
+    
+    resume_context = f"""
+    User's Resume Information:
+    Name: {resume_data.get('name', 'N/A')}
+    Email: {resume_data.get('email', 'N/A')}
+    Location: {resume_data.get('location', 'N/A')}
+    
+    Summary: {resume_data.get('summary', 'N/A')}
+    
+    Skills: {', '.join(resume_data.get('skills', []))}
+    Technical Skills: {', '.join(resume_data.get('technical_skills', []))}
+    Industry Skills: {', '.join(resume_data.get('industry_skills', []))}
+    
+    Experience:
+    {json.dumps(resume_data.get('experience', []), indent=2)}
+    
+    Education:
+    {json.dumps(resume_data.get('education', []), indent=2)}
+    
+    Certifications: {', '.join(resume_data.get('certifications', []))}
+    
+    Projects:
+    {json.dumps(resume_data.get('projects', []), indent=2)}
+    
+    Industry Alignment Score: {resume_data.get('industry_alignment', 0)}%
+    """
+    
+    prompt = f"""
+    You are an expert career counselor and resume advisor. The user has uploaded their resume and wants to ask questions about it.
+    
+    Here is their resume information:
+    {resume_context}
+    
+    User's question: {user_message}
+    
+    Please provide helpful, specific, and actionable advice based on their actual resume data. Be encouraging but honest about areas for improvement. If they ask about job search strategies, salary negotiations, interview tips, or career advice, provide practical guidance tailored to their background.
+    
+    Keep your response conversational, helpful, and under 300 words unless they specifically ask for detailed information.
+    """
+    
+    return call_euri_api(prompt)
+
 # --- Streamlit UI ---
 def main():
     st.title("🤖 AI-Powered Job Search Assistant")
-    st.markdown("*Find your next opportunity with AI-enhanced resume analysis and live job scraping*")
+    st.markdown("*Find your next opportunity with AI-enhanced resume analysis, global job search, and career chat*")
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Choose a feature:",
-        ["📄 Resume Analyzer", "🔍 Live Job Search", "💼 AI Job Matching"]
+        ["📄 Resume Analyzer", "🔍 Global Job Search", "💼 AI Job Matching", "💬 Career Chat"]
     )
     
     if page == "📄 Resume Analyzer":
         render_resume_analyzer()
-    elif page == "🔍 Live Job Search":
-        render_live_job_search()
-    else:
+    elif page == "🔍 Global Job Search":
+        render_global_job_search()
+    elif page == "💼 AI Job Matching":
         render_ai_job_matching()
+    else:
+        render_career_chat()
 
 def render_resume_analyzer():
     st.header("📄 Resume Analysis & ATS Optimization")
@@ -773,22 +845,19 @@ def render_resume_analyzer():
     )
     
     if uploaded_file is not None:
-        # Show file details
-        st.info(f"📁 File: {uploaded_file.name} ({uploaded_file.size} bytes)")
+        st.info(f"📎 File: {uploaded_file.name} ({uploaded_file.size} bytes)")
         
         if st.button("🚀 Analyze Resume", type="primary"):
             with st.spinner("🤖 AI is analyzing your resume... This may take 30-60 seconds."):
                 file_content = get_text_from_file(uploaded_file)
                 
                 if file_content and len(file_content.strip()) > 50:
-                    # Parse resume with industry context
                     industry_for_analysis = selected_industry if selected_industry != "None" else None
                     resume_data = parse_resume_with_ai(file_content, industry_for_analysis)
                     
                     if resume_data and resume_data.get('name') != 'Could not extract':
                         st.session_state.resume_data = resume_data
                         
-                        # Generate insights with industry context
                         insights = generate_resume_insights(resume_data, industry_for_analysis)
                         if insights:
                             st.session_state.resume_insights = insights
@@ -802,6 +871,261 @@ def render_resume_analyzer():
     # Display results if available
     if st.session_state.resume_data:
         display_resume_analysis()
+
+def render_global_job_search():
+    st.header("🌍 Global Job Search Engine")
+    st.markdown("Search for jobs across different countries with localized results")
+    
+    with st.form("global_job_search"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            job_title = st.text_input("Job Title", "Software Engineer", 
+                                    help="Enter the specific job title you're looking for")
+            
+            selected_industry = st.selectbox(
+                "Industry",
+                ["Any Industry"] + list(INDUSTRIES.keys()),
+                help="Select industry for targeted job search"
+            )
+        
+        with col2:
+            country = st.selectbox(
+                "Country",
+                list(COUNTRIES.keys()),
+                help="Select the country where you want to work"
+            )
+            
+            city = st.text_input(
+                "City (Optional)", 
+                placeholder="e.g., London, Toronto, Sydney",
+                help="Specify a city for more targeted results"
+            )
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            time_duration = st.selectbox(
+                "Time Range",
+                list(TIME_FILTERS.keys()),
+                help="How far back to search for job postings"
+            )
+        
+        with col4:
+            # Domain selection (conditional)
+            selected_domain = None
+            if selected_industry != "Any Industry":
+                domains = INDUSTRIES[selected_industry]['domains']
+                selected_domain = st.selectbox(
+                    f"{selected_industry} Domain",
+                    ["Any Domain"] + domains,
+                    help=f"Choose a specific domain within {selected_industry}"
+                )
+        
+        submitted = st.form_submit_button("🌍 Search Global Jobs", type="primary")
+    
+    if submitted:
+        industry_param = selected_industry if selected_industry != "Any Industry" else None
+        
+        # Show search parameters
+        search_params = []
+        search_params.append(f"**Job Title:** {job_title}")
+        search_params.append(f"**Country:** {country}")
+        if city:
+            search_params.append(f"**City:** {city}")
+        if industry_param:
+            search_params.append(f"**Industry:** {industry_param}")
+        if selected_domain and selected_domain != "Any Domain":
+            search_params.append(f"**Domain:** {selected_domain}")
+        search_params.append(f"**Time Range:** {time_duration}")
+        
+        country_info = COUNTRIES.get(country, {})
+        st.info(f"🔍 **Searching in {country}:**\n" + " • ".join(search_params))
+        st.caption(f"📍 Using {country} job sites: {', '.join(country_info.get('job_sites', [])[:3])}")
+        
+        with st.spinner(f"🌍 Searching for jobs in {country}..."):
+            found_jobs = run_enhanced_job_scraper(
+                job_title, country, city, industry_param, time_duration
+            )
+            
+            st.session_state.scraped_jobs = found_jobs
+            
+            if found_jobs:
+                st.success(f"✅ Found {len(found_jobs)} job listings in {country}!")
+                display_scraped_jobs(found_jobs, industry_param, country)
+            else:
+                st.warning(f"⚠️ No job listings found in {country} matching your criteria from the {time_duration.lower()}.")
+                
+                st.markdown("**💡 Try these suggestions:**")
+                st.markdown("• Use broader job titles (e.g., 'Engineer' instead of 'Senior Backend Engineer')")
+                st.markdown("• Extend the time range to 'Last week' or 'Last month'")
+                st.markdown("• Try 'Any Industry' if you selected a specific industry")
+                st.markdown("• Remove the city filter to search the entire country")
+                st.markdown("• Try related job titles or synonyms")
+
+def render_ai_job_matching():
+    st.header("💼 AI Job Matching")
+    st.markdown("Get personalized job recommendations powered by AI with global reach")
+    
+    # Show resume status
+    if st.session_state.resume_data:
+        st.success("✅ Resume loaded - AI will provide personalized matches!")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"👤 {st.session_state.resume_data.get('name', 'User')}")
+        with col2:
+            st.info(f"🎯 {len(st.session_state.resume_data.get('skills', []))} skills detected")
+        with col3:
+            industry_alignment = st.session_state.resume_data.get('industry_alignment', 0)
+            st.info(f"📊 Industry fit: {industry_alignment}%")
+    else:
+        st.info("💡 Upload your resume in the Resume Analyzer for personalized matches!")
+    
+    with st.form("ai_job_search"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Smart default based on resume
+            default_title = "Software Engineer"
+            if st.session_state.resume_data:
+                experience = st.session_state.resume_data.get('experience', [])
+                if experience and experience[0].get('title'):
+                    default_title = experience[0]['title']
+            
+            job_title = st.text_input(
+                "Job Title",
+                value=default_title,
+                help="AI will find jobs matching this title"
+            )
+            
+            selected_industry = st.selectbox(
+                "Target Industry",
+                ["Any Industry"] + list(INDUSTRIES.keys()),
+                help="Select industry for focused job matching"
+            )
+        
+        with col2:
+            country = st.selectbox(
+                "Preferred Country",
+                list(COUNTRIES.keys()),
+                help="Choose your preferred country to work in"
+            )
+            
+            city = st.text_input(
+                "City (Optional)",
+                placeholder="e.g., Berlin, Toronto, Singapore",
+                help="Specify a city for more targeted results"
+            )
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            selected_domain = None
+            if selected_industry != "Any Industry":
+                domains = INDUSTRIES[selected_industry]['domains']
+                selected_domain = st.selectbox(
+                    f"{selected_industry} Domain",
+                    ["Any Domain"] + domains,
+                    help=f"Choose specific domain within {selected_industry}"
+                )
+        
+        submitted = st.form_submit_button("🤖 Get AI Job Matches", type="primary")
+    
+    if submitted:
+        industry_param = selected_industry if selected_industry != "Any Industry" else None
+        domain_param = selected_domain if selected_domain and selected_domain != "Any Domain" else None
+        
+        with st.spinner(f"🤖 AI is finding the best job matches for you in {country}..."):
+            jobs_data = search_jobs_with_ai(
+                job_title, country, city, industry_param, domain_param, st.session_state.resume_data
+            )
+            
+            if jobs_data and jobs_data.get("jobs"):
+                st.session_state.ai_jobs = jobs_data["jobs"]
+                st.success(f"✅ AI found {len(jobs_data['jobs'])} personalized job matches in {country}!")
+                display_ai_jobs(jobs_data["jobs"], industry_param, country)
+            else:
+                st.error("❌ AI job search failed. Please try again with different parameters.")
+
+def render_career_chat():
+    st.header("💬 Career Chat Assistant")
+    st.markdown("Ask questions about your resume, career advice, interview tips, and job search strategies")
+    
+    # Show resume status
+    if st.session_state.resume_data:
+        st.success("✅ Your resume is loaded - I can provide personalized advice!")
+        with st.expander("📋 Your Resume Summary"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Name", st.session_state.resume_data.get('name', 'N/A'))
+            with col2:
+                st.metric("Experience", f"{len(st.session_state.resume_data.get('experience', []))} positions")
+            with col3:
+                st.metric("Skills", f"{len(st.session_state.resume_data.get('skills', []))} total")
+    else:
+        st.info("💡 Upload your resume in the Resume Analyzer for personalized career advice!")
+    
+    # Chat interface
+    st.subheader("🗣️ Chat with Career Assistant")
+    
+    # Display chat history
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # Chat input
+    if prompt := st.chat_input("Ask me anything about your resume or career..."):
+        # Add user message to chat history
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate assistant response
+        with st.chat_message("assistant"):
+            with st.spinner("🤖 Thinking..."):
+                response = chat_about_resume(prompt, st.session_state.resume_data)
+                if response:
+                    st.markdown(response)
+                    st.session_state.chat_messages.append({"role": "assistant", "content": response})
+                else:
+                    error_msg = "I'm having trouble connecting to the AI service. Please try again."
+                    st.markdown(error_msg)
+                    st.session_state.chat_messages.append({"role": "assistant", "content": error_msg})
+    
+    # Suggested questions
+    if not st.session_state.chat_messages:
+        st.markdown("### 💭 Suggested Questions")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("How can I improve my resume?", key="q1"):
+                st.session_state.chat_messages.append({"role": "user", "content": "How can I improve my resume?"})
+                st.rerun()
+            
+            if st.button("What salary should I expect?", key="q2"):
+                st.session_state.chat_messages.append({"role": "user", "content": "Based on my experience, what salary range should I expect?"})
+                st.rerun()
+            
+            if st.button("Interview tips for my background?", key="q3"):
+                st.session_state.chat_messages.append({"role": "user", "content": "What interview tips can you give me based on my background?"})
+                st.rerun()
+        
+        with col2:
+            if st.button("Skills I should learn?", key="q4"):
+                st.session_state.chat_messages.append({"role": "user", "content": "What skills should I learn to advance my career?"})
+                st.rerun()
+            
+            if st.button("Career change advice?", key="q5"):
+                st.session_state.chat_messages.append({"role": "user", "content": "I'm considering a career change. What advice do you have?"})
+                st.rerun()
+            
+            if st.button("Industry trends?", key="q6"):
+                st.session_state.chat_messages.append({"role": "user", "content": "What are the current trends in my industry?"})
+                st.rerun()
+    
+    # Clear chat button
+    if st.session_state.chat_messages:
+        if st.button("🗑️ Clear Chat", key="clear_chat"):
+            st.session_state.chat_messages = []
+            st.rerun()
 
 def display_resume_analysis():
     """Display resume analysis results with industry insights."""
@@ -846,7 +1170,7 @@ def display_resume_analysis():
             st.subheader("🎯 Industry-Relevant Skills")
             skills_cols = st.columns(3)
             industry_skills = resume_data.get('industry_skills', [])
-            for i, skill in enumerate(industry_skills[:9]):  # Show up to 9 skills
+            for i, skill in enumerate(industry_skills[:9]):
                 with skills_cols[i % 3]:
                     st.success(f"✅ {skill}")
         
@@ -880,7 +1204,6 @@ def display_resume_analysis():
         with tab4:
             st.subheader("Skills Development Recommendations")
             
-            # Missing keywords
             st.markdown("**🔑 Missing Industry Keywords:**")
             keywords = insights.get('keyword_suggestions', [])
             if keywords:
@@ -891,7 +1214,6 @@ def display_resume_analysis():
             else:
                 st.success("Great keyword coverage!")
             
-            # Skills to add
             st.markdown("**🚀 In-Demand Skills to Consider:**")
             skills_to_add = insights.get('skills_to_add', [])
             if skills_to_add:
@@ -906,117 +1228,19 @@ def display_resume_analysis():
             for i, item in enumerate(action_items, 1):
                 st.markdown(f"{i}. {item}")
             
-            # Competitive analysis
             if insights.get('competitive_analysis'):
                 st.subheader("📊 Market Position")
                 st.info(insights['competitive_analysis'])
     
-    # Resume details in expander
     with st.expander("📄 Extracted Resume Details"):
         st.json(resume_data)
 
-def render_live_job_search():
-    st.header("🔍 Live Job Search Engine")
-    st.markdown("Scrape live job postings from major ATS platforms and job boards with industry focus")
-    
-    with st.form("live_job_search"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            job_title = st.text_input("Job Title", "Software Engineer", 
-                                    help="Enter the specific job title you're looking for")
-            
-            # Industry selection
-            selected_industry = st.selectbox(
-                "Industry",
-                ["Any Industry"] + list(INDUSTRIES.keys()),
-                help="Select industry for targeted job search"
-            )
-        
-        with col2:
-            location_type = st.selectbox(
-                "Work Type",
-                ["Remote", "On-site", "Hybrid"],
-                help="Select preferred work arrangement"
-            )
-            
-            # Domain selection (conditional)
-            selected_domain = None
-            if selected_industry != "Any Industry":
-                domains = INDUSTRIES[selected_industry]['domains']
-                selected_domain = st.selectbox(
-                    f"{selected_industry} Domain",
-                    ["Any Domain"] + domains,
-                    help=f"Choose a specific domain within {selected_industry}"
-                )
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            time_duration = st.selectbox(
-                "Time Range",
-                list(TIME_FILTERS.keys()),
-                help="How far back to search for job postings"
-            )
-        
-        with col4:
-            location_text = st.text_input(
-                "Location", 
-                "San Francisco, CA",
-                help="City, state, or region (required for On-site/Hybrid)"
-            )
-        
-        submitted = st.form_submit_button("🚀 Search Live Jobs", type="primary")
-    
-    if submitted:
-        if location_type in ["On-site", "Hybrid"] and not location_text.strip():
-            st.error("❌ Please provide a location for On-site/Hybrid searches.")
-        else:
-            # Prepare parameters
-            industry_param = selected_industry if selected_industry != "Any Industry" else None
-            domain_param = selected_domain if selected_domain and selected_domain != "Any Domain" else None
-            
-            # Show search parameters
-            search_params = []
-            search_params.append(f"**Job Title:** {job_title}")
-            search_params.append(f"**Work Type:** {location_type}")
-            if location_text:
-                search_params.append(f"**Location:** {location_text}")
-            if industry_param:
-                search_params.append(f"**Industry:** {industry_param}")
-            if domain_param:
-                search_params.append(f"**Domain:** {domain_param}")
-            search_params.append(f"**Time Range:** {time_duration}")
-            
-            st.info("🔍 **Searching with parameters:**\n" + " • ".join(search_params))
-            
-            with st.spinner(f"🔍 Scraping live job listings from the {time_duration.lower()}..."):
-                found_jobs = run_enhanced_job_scraper(
-                    job_title, location_type, location_text, 
-                    industry_param, domain_param, time_duration
-                )
-                
-                st.session_state.scraped_jobs = found_jobs
-                
-                if found_jobs:
-                    st.success(f"✅ Found {len(found_jobs)} unique job listings!")
-                    display_scraped_jobs(found_jobs, industry_param)
-                else:
-                    st.warning(f"⚠️ No job listings found matching your criteria from the {time_duration.lower()}.")
-                    
-                    # Suggestions for better results
-                    st.markdown("**💡 Try these suggestions:**")
-                    st.markdown("• Use broader job titles (e.g., 'Engineer' instead of 'Senior Backend Engineer')")
-                    st.markdown("• Extend the time range to 'Last week' or 'Last month'")
-                    st.markdown("• Try 'Any Industry' if you selected a specific industry")
-                    st.markdown("• Check if the job title spelling is correct")
-                    st.markdown("• Try related job titles or synonyms")
-
-def display_scraped_jobs(jobs, industry=None):
+def display_scraped_jobs(jobs, industry=None, country=None):
     """Display scraped job results with enhanced filtering."""
     if not jobs:
         return
     
-    st.markdown(f"### 📋 Found {len(jobs)} Job Listings")
+    st.markdown(f"### 📋 Found {len(jobs)} Job Listings in {country}")
     
     # Enhanced filters
     col1, col2, col3 = st.columns(3)
@@ -1065,7 +1289,6 @@ def display_scraped_jobs(jobs, industry=None):
         filtered_jobs.sort(key=lambda x: x['title'])
     elif sort_option == "Recently Scraped":
         filtered_jobs.sort(key=lambda x: x['scraped_at'], reverse=True)
-    # Default is already relevance sorted
     
     if not filtered_jobs:
         st.warning("No jobs match your current filters. Try adjusting the criteria.")
@@ -1073,18 +1296,16 @@ def display_scraped_jobs(jobs, industry=None):
     
     st.markdown(f"*Showing {len(filtered_jobs)} of {len(jobs)} jobs*")
     
-    # Display jobs in a more organized way
+    # Display jobs
     for i, job in enumerate(filtered_jobs):
         with st.container():
             if i > 0:
                 st.markdown("---")
             
-            # Header row
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
                 st.markdown(f"**{job['title']}**")
                 
-                # Add industry relevance badge if applicable
                 if industry:
                     title_lower = job['title'].lower()
                     industry_keywords = INDUSTRIES.get(industry, {}).get('keywords', [])
@@ -1098,106 +1319,25 @@ def display_scraped_jobs(jobs, industry=None):
             with col3:
                 st.link_button("📄 View & Apply", job['link'], use_container_width=True)
             
-            # Description with snippet
             if job.get('snippet') and job['snippet'] != "No description available.":
-                with st.expander("📝 Job Description Preview"):
+                with st.expander("📖 Job Description Preview"):
                     st.markdown(job['snippet'])
             
-            # Metadata
-            st.caption(f"⏰ Scraped: {job.get('scraped_at', 'Unknown')} | 🔍 Query: {job.get('query', 'N/A')[:50]}...")
+            st.caption(f"⏰ Scraped: {job.get('scraped_at', 'Unknown')} | 🔍 From: {country}")
 
-def render_ai_job_matching():
-    st.header("💼 AI Job Matching")
-    st.markdown("Get personalized job recommendations powered by AI with industry focus")
-    
-    # Show resume status
-    if st.session_state.resume_data:
-        st.success("✅ Resume loaded - AI will provide personalized matches!")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.info(f"👤 {st.session_state.resume_data.get('name', 'User')}")
-        with col2:
-            st.info(f"🎯 {len(st.session_state.resume_data.get('skills', []))} skills detected")
-        with col3:
-            industry_alignment = st.session_state.resume_data.get('industry_alignment', 0)
-            st.info(f"📊 Industry fit: {industry_alignment}%")
-    else:
-        st.info("💡 Upload your resume in the Resume Analyzer for personalized matches!")
-    
-    with st.form("ai_job_search"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Smart default based on resume
-            default_title = "Software Engineer"
-            if st.session_state.resume_data:
-                experience = st.session_state.resume_data.get('experience', [])
-                if experience and experience[0].get('title'):
-                    default_title = experience[0]['title']
-            
-            job_title = st.text_input(
-                "Job Title",
-                value=default_title,
-                help="AI will find jobs matching this title"
-            )
-            
-            # Industry selection
-            selected_industry = st.selectbox(
-                "Target Industry",
-                ["Any Industry"] + list(INDUSTRIES.keys()),
-                help="Select industry for focused job matching"
-            )
-        
-        with col2:
-            location = st.text_input(
-                "Preferred Location",
-                "San Francisco, CA",
-                help="City, state or 'Remote' for remote positions"
-            )
-            
-            # Domain selection
-            selected_domain = None
-            if selected_industry != "Any Industry":
-                domains = INDUSTRIES[selected_industry]['domains']
-                selected_domain = st.selectbox(
-                    f"{selected_industry} Domain",
-                    ["Any Domain"] + domains,
-                    help=f"Choose specific domain within {selected_industry}"
-                )
-        
-        submitted = st.form_submit_button("🤖 Get AI Job Matches", type="primary")
-    
-    if submitted:
-        # Prepare parameters
-        industry_param = selected_industry if selected_industry != "Any Industry" else None
-        domain_param = selected_domain if selected_domain and selected_domain != "Any Domain" else None
-        
-        with st.spinner("🤖 AI is finding the best job matches for you..."):
-            jobs_data = search_jobs_with_ai(
-                job_title, location, industry_param, domain_param, st.session_state.resume_data
-            )
-            
-            if jobs_data and jobs_data.get("jobs"):
-                st.session_state.ai_jobs = jobs_data["jobs"]
-                st.success(f"✅ AI found {len(jobs_data['jobs'])} personalized job matches!")
-                display_ai_jobs(jobs_data["jobs"], industry_param)
-            else:
-                st.error("❌ AI job search failed. Please try again with different parameters.")
-
-def display_ai_jobs(jobs, industry=None):
+def display_ai_jobs(jobs, industry=None, country=None):
     """Display AI-generated job matches with enhanced features."""
     if not jobs:
         return
     
-    # Sort by match score
     jobs_sorted = sorted(jobs, key=lambda x: x.get('match_score', 0), reverse=True)
     
-    st.markdown(f"### 🎯 AI Job Matches")
+    st.markdown(f"### 🎯 AI Job Matches in {country}")
     
     # Enhanced filter options
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        min_salary = st.number_input("Min Salary ($)", min_value=0, max_value=500000, value=0, step=5000)
+        min_salary = st.number_input("Min Salary", min_value=0, max_value=500000, value=0, step=5000)
     with col2:
         company_size_filter = st.multiselect(
             "Company Size",
@@ -1205,11 +1345,7 @@ def display_ai_jobs(jobs, industry=None):
             default=["Startup", "Mid-size", "Enterprise"]
         )
     with col3:
-        remote_type_filter = st.multiselect(
-            "Work Type",
-            ["Remote", "Hybrid", "On-site"],
-            default=["Remote", "Hybrid", "On-site"]
-        )
+        visa_sponsorship = st.checkbox("Visa Sponsorship Available", value=False)
     with col4:
         min_match_score = st.slider("Min Match Score", 0, 100, 70, help="Filter by minimum match percentage")
     
@@ -1218,8 +1354,8 @@ def display_ai_jobs(jobs, industry=None):
     for job in jobs_sorted:
         if (job.get('salary_min', 0) >= min_salary and 
             job.get('company_size', '') in company_size_filter and
-            job.get('remote_type', '') in remote_type_filter and
-            job.get('match_score', 0) >= min_match_score):
+            job.get('match_score', 0) >= min_match_score and
+            (not visa_sponsorship or job.get('visa_sponsorship', False))):
             filtered_jobs.append(job)
     
     if not filtered_jobs:
@@ -1228,26 +1364,25 @@ def display_ai_jobs(jobs, industry=None):
     
     st.markdown(f"*Showing {len(filtered_jobs)} of {len(jobs)} jobs*")
     
-    # Display jobs with enhanced information
+    # Display jobs
     for job in filtered_jobs:
         with st.container():
             st.markdown("---")
             
-            # Header with match score and key info
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.markdown(f"### {job.get('title', 'N/A')}")
                 
-                # Company and location info
                 company_info = f"🏢 **{job.get('company', 'N/A')}**"
                 if job.get('company_size'):
                     company_info += f" ({job.get('company_size')})"
                 
-                location_info = f"📍 {job.get('location', 'N/A')} • 💼 {job.get('remote_type', 'N/A')}"
+                location_info = f"📍 {job.get('location', 'N/A')}"
+                if job.get('visa_sponsorship'):
+                    location_info += " 🌍 Visa Sponsorship"
                 
                 st.markdown(f"{company_info} • {location_info}")
                 
-                # Industry and domain tags
                 if job.get('industry') or job.get('domain'):
                     tags = []
                     if job.get('industry'):
@@ -1264,14 +1399,15 @@ def display_ai_jobs(jobs, industry=None):
             # Salary and posting info
             col1, col2, col3 = st.columns(3)
             with col1:
-                salary_range = f"${job.get('salary_min', 0):,} - ${job.get('salary_max', 0):,}"
+                currency = job.get('currency', 'USD')
+                salary_range = f"{currency} {job.get('salary_min', 0):,} - {job.get('salary_max', 0):,}"
                 st.markdown(f"💰 **Salary:** {salary_range}")
             with col2:
                 st.markdown(f"📅 **Posted:** {job.get('posted_date', 'N/A')}")
             with col3:
                 st.markdown(f"⚡ **Type:** {job.get('type', 'Full-time')}")
             
-            # Key technologies (if available)
+            # Key technologies
             if job.get('key_technologies'):
                 st.markdown("**🔧 Key Technologies:**")
                 tech_cols = st.columns(min(len(job['key_technologies']), 4))
@@ -1279,11 +1415,10 @@ def display_ai_jobs(jobs, industry=None):
                     with tech_cols[i]:
                         st.code(tech)
             
-            # Description
             st.markdown("**Job Description:**")
             st.markdown(job.get('description', 'No description available.'))
             
-            # Requirements and qualifications in expandable sections
+            # Requirements and qualifications
             col1, col2 = st.columns(2)
             with col1:
                 with st.expander("📋 Requirements"):
@@ -1295,7 +1430,7 @@ def display_ai_jobs(jobs, industry=None):
                     for qual in job.get('preferred_qualifications', []):
                         st.markdown(f"• {qual}")
             
-            # Match reasons (if resume was provided)
+            # Match reasons
             if job.get('match_reasons'):
                 with st.expander("🎯 Why this matches your profile"):
                     for reason in job.get('match_reasons', []):
@@ -1370,9 +1505,16 @@ def add_sidebar_features():
             )
     
     st.sidebar.markdown("---")
+    st.sidebar.subheader("🌍 Countries Supported")
+    
+    with st.sidebar.expander("View All Countries"):
+        for country, details in COUNTRIES.items():
+            st.markdown(f"**{country}** ({details['code']})")
+            st.caption(f"Job sites: {len(details['job_sites'])}")
+    
+    st.sidebar.markdown("---")
     st.sidebar.subheader("🏭 Industries Supported")
     
-    # Show available industries in sidebar
     with st.sidebar.expander("View All Industries"):
         for industry, details in INDUSTRIES.items():
             st.markdown(f"**{industry}**")
@@ -1382,20 +1524,24 @@ def add_sidebar_features():
     st.sidebar.subheader("ℹ️ About")
     st.sidebar.info(
         """
-        **AI Job Search Assistant v2.0**
+        **AI Job Search Assistant v3.0**
         
         **New Features:**
-        • 🏭 10+ Industry categories
-        • 🎯 50+ Domain specializations  
-        • 📊 Enhanced resume analysis
+        • 🌍 10 Country support
+        • 💬 Career chat assistant
+        • 🎯 Enhanced AI matching
+        • 📊 Better resume analysis
         • 🔍 Improved job scraping
-        • 🤖 Smarter AI matching
+        
+        **Supported Countries:**
+        🇺🇸 US, 🇬🇧 UK, 🇨🇦 Canada, 🇦🇺 Australia, 
+        🇩🇪 Germany, 🇫🇷 France, 🇮🇳 India, 
+        🇸🇬 Singapore, 🇳🇱 Netherlands, 🇯🇵 Japan
         
         **Data Sources:**
-        • 15+ ATS platforms
+        • Country-specific job sites
+        • ATS platforms
         • Company career pages
-        • Major job boards
-        • Remote job sites
         
         **Note:** Heavy usage may result in 
         temporary rate limits from search engines.
@@ -1403,11 +1549,13 @@ def add_sidebar_features():
     )
     
     # Usage statistics
-    if st.session_state.scraped_jobs or st.session_state.ai_jobs:
+    if st.session_state.scraped_jobs or st.session_state.ai_jobs or st.session_state.chat_messages:
         st.sidebar.markdown("---")
         st.sidebar.subheader("📈 Session Stats")
         st.sidebar.metric("Scraped Jobs", len(st.session_state.scraped_jobs))
         st.sidebar.metric("AI Matches", len(st.session_state.ai_jobs))
+        st.sidebar.metric("Chat Messages", len(st.session_state.chat_messages))
+        
         if st.session_state.resume_data:
             st.sidebar.success("✅ Resume Analyzed")
             industry_fit = st.session_state.resume_data.get('industry_alignment', 0)
@@ -1462,6 +1610,19 @@ if __name__ == "__main__":
         font-size: 0.8rem;
         margin: 0.1rem;
     }
+    .chat-message {
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0.5rem;
+    }
+    .user-message {
+        background-color: #e3f2fd;
+        margin-left: 2rem;
+    }
+    .assistant-message {
+        background-color: #f5f5f5;
+        margin-right: 2rem;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -1470,4 +1631,3 @@ if __name__ == "__main__":
     
     # Run main app
     main()
-
