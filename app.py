@@ -167,7 +167,11 @@ def extract_json_from_response(text):
         # Remove markdown code blocks
         text = text.replace('```json', '').replace('```', '').strip()
         
-        # Try to find JSON object boundaries
+        # Remove thinking tags that some AI models include
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        
+        # Remove any text before the first { and after the last }
         json_start = text.find('{')
         if json_start == -1:
             logger.error("No JSON object found in response")
@@ -188,26 +192,33 @@ def extract_json_from_response(text):
         
         if brace_count != 0:
             logger.error("Unmatched braces in JSON")
-            return None
+            # Try to find the last complete JSON object
+            last_brace = text.rfind('}')
+            if last_brace > json_start:
+                json_end = last_brace + 1
+            else:
+                return None
             
         json_str = text[json_start:json_end]
         
         # Clean up common JSON issues
         json_str = clean_json_string(json_str)
         
-        return json.loads(json_str)
+        # Validate JSON before returning
+        parsed = json.loads(json_str)
+        return parsed
         
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
-        logger.error(f"Problematic JSON: {text[:500]}...")
+        logger.error(f"Problematic JSON snippet: {text[max(0, json_start):json_start+200]}...")
         
         # Try to fix common JSON issues and retry
         try:
             fixed_json = fix_common_json_issues(text)
             if fixed_json:
                 return json.loads(fixed_json)
-        except:
-            pass
+        except Exception as fix_error:
+            logger.error(f"JSON fix attempt failed: {fix_error}")
             
     except Exception as e:
         logger.error(f"Unexpected error in JSON extraction: {e}")
@@ -219,8 +230,8 @@ def clean_json_string(json_str):
     # Remove trailing commas before closing braces/brackets
     json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
     
-    # Fix unescaped quotes in strings
-    json_str = re.sub(r'(?<!\\)"(?=.*".*:)', r'\\"', json_str)
+    # Fix unescaped quotes in strings (basic attempt)
+    json_str = re.sub(r'(?<!\\)"(?=[^"]*"[^"]*:)', r'\\"', json_str)
     
     # Remove any null bytes
     json_str = json_str.replace('\x00', '')
@@ -228,12 +239,19 @@ def clean_json_string(json_str):
     # Fix newlines in string values
     json_str = re.sub(r':\s*"([^"]*)\n([^"]*)"', r': "\1 \2"', json_str)
     
-    return json_str
+    # Remove any remaining thinking tags
+    json_str = re.sub(r'</?think[^>]*>', '', json_str)
+    
+    return json_str.strip()
 
 def fix_common_json_issues(text):
     """Attempt to fix common JSON formatting issues."""
     try:
-        # Find JSON boundaries again
+        # Remove thinking tags first
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        
+        # Find JSON boundaries
         json_start = text.find('{')
         if json_start == -1:
             return None
@@ -252,7 +270,8 @@ def fix_common_json_issues(text):
         json.loads(json_str)
         return json_str
         
-    except:
+    except Exception as e:
+        logger.error(f"JSON fix failed: {e}")
         return None
 
 def call_euri_api(prompt, max_retries=3):
@@ -574,25 +593,19 @@ def parse_resume_with_ai(resume_text, selected_industry=None):
         domains = INDUSTRIES.get(selected_industry, {}).get('domains', [])
         industry_context = f"Industry Focus: {selected_industry}\nRelevant Domains: {', '.join(domains[:5])}"
     
+    # Create a more explicit prompt that discourages thinking tags
     prompt = f"""
-    You are a resume parser. Analyze this resume and extract information into a valid JSON format.
+    Extract information from this resume and format it as a JSON object. Do not include any explanations, thinking process, or additional text - return ONLY the JSON object.
     
     {industry_context}
     
-    CRITICAL INSTRUCTIONS:
-    1. Return ONLY a valid JSON object
-    2. Use double quotes for all strings
-    3. Escape any quotes inside string values
-    4. Do not include trailing commas
-    5. Ensure all arrays and objects are properly closed
-    
-    Required JSON structure:
+    JSON Format Required (copy this structure exactly):
     {{
-        "name": "Full Name",
+        "name": "Full Name Here",
         "email": "email@domain.com",
         "phone": "phone number",
         "location": "city, state/country",
-        "summary": "Professional summary in 2-3 sentences",
+        "summary": "Brief professional summary",
         "skills": ["skill1", "skill2", "skill3"],
         "technical_skills": ["tech1", "tech2"],
         "experience": [
@@ -615,36 +628,63 @@ def parse_resume_with_ai(resume_text, selected_industry=None):
     }}
     
     Resume Text:
-    {resume_text[:3000]}
+    {resume_text[:2500]}
     
-    Return ONLY the JSON object with no additional text, explanations, or markdown formatting.
+    IMPORTANT: Return ONLY the JSON object. No thinking, no explanations, no markdown - just pure JSON starting with {{ and ending with }}.
     """
     
-    # Try multiple times with different approaches
+    # Try with different model parameters to reduce thinking
     for attempt in range(3):
         try:
-            response = call_euri_api(prompt)
-            if response:
-                # Log the raw response for debugging
-                logger.info(f"AI Response attempt {attempt + 1}: {response[:200]}...")
-                
-                parsed = extract_json_from_response(response)
-                if parsed and validate_resume_data(parsed):
-                    logger.info("Successfully parsed resume with AI")
-                    return parsed
-                else:
-                    logger.warning(f"Failed to parse JSON on attempt {attempt + 1}")
+            # Modify the API call to discourage reasoning
+            headers = {
+                "Authorization": f"Bearer {EURI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "deepseek-r1-distill-llama-70b",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a JSON data extractor. Return only valid JSON objects with no additional text, explanations, or thinking process."
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 800,  # Reduced to limit thinking
+                "temperature": 0.1,  # Lower temperature for more consistent output
+                "stop": ["<think>", "</think>", "```"]  # Stop sequences to prevent thinking
+            }
+            
+            response = requests.post(EURI_API_URL, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            ai_response = result['choices'][0]['message']['content']
+            
+            # Log the raw response for debugging
+            logger.info(f"AI Response attempt {attempt + 1} (first 100 chars): {ai_response[:100]}...")
+            
+            # Extract and validate JSON
+            parsed = extract_json_from_response(ai_response)
+            if parsed and validate_resume_data(parsed):
+                logger.info("Successfully parsed resume with AI")
+                return parsed
+            else:
+                logger.warning(f"Failed to parse JSON on attempt {attempt + 1}")
             
             # Modify prompt for retry
             if attempt < 2:
                 prompt = prompt.replace("Return ONLY the JSON object", 
-                                      "Return a simple, valid JSON object without any formatting issues")
+                                      "Output must be valid JSON format only. No text before or after the JSON.")
                 
         except Exception as e:
             logger.error(f"Resume parsing attempt {attempt + 1} failed: {e}")
     
     # Fallback: Basic text extraction
-    logger.warning("AI parsing failed, using fallback extraction")
+    logger.warning("AI parsing failed completely, using fallback extraction")
     return extract_resume_fallback(resume_text, selected_industry)
 
 def validate_resume_data(data):
@@ -730,18 +770,19 @@ def generate_resume_insights(resume_data, selected_industry=None):
         keywords = INDUSTRIES.get(selected_industry, {}).get('keywords', [])
         industry_context = f"Target Industry: {selected_industry}\nKey Keywords: {', '.join(keywords[:8])}"
     
+    # Create a simpler prompt that avoids thinking responses
     prompt = f"""
-    You are a professional resume advisor. Analyze this resume data and provide insights.
+    Analyze this resume and return insights as JSON. No explanations or thinking process - only JSON output.
     
     {industry_context}
     
-    Resume Data Summary:
+    Resume Summary:
     - Name: {resume_data.get('name', 'N/A')}
     - Skills: {len(resume_data.get('skills', []))} skills listed
     - Experience: {len(resume_data.get('experience', []))} positions
     - Education: {len(resume_data.get('education', []))} entries
     
-    CRITICAL: Return ONLY a valid JSON object with these exact keys:
+    Return this exact JSON structure:
     {{
         "ats_score": 75,
         "overall_score": 80,
@@ -751,27 +792,46 @@ def generate_resume_insights(resume_data, selected_industry=None):
         "recommendations": ["rec1", "rec2", "rec3"]
     }}
     
-    Guidelines:
-    - ats_score: Rate ATS compatibility (0-100)
-    - overall_score: Overall resume quality (0-100)  
-    - strengths: 3-5 positive aspects
-    - improvements: 2-4 areas to improve
-    - missing_keywords: Industry keywords not found
-    - recommendations: 3-5 specific action items
-    
-    Return ONLY the JSON object with no additional text.
+    JSON output only - no additional text.
     """
     
     try:
-        response = call_euri_api(prompt)
-        if response:
-            logger.info(f"Insights AI Response: {response[:200]}...")
-            parsed = extract_json_from_response(response)
-            
-            if parsed and validate_insights_data(parsed):
-                return parsed
-            else:
-                logger.warning("Failed to parse insights JSON, using fallback")
+        # Use the same approach as resume parsing with stop sequences
+        headers = {
+            "Authorization": f"Bearer {EURI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "deepseek-r1-distill-llama-70b",
+            "messages": [
+                {
+                    "role": "system", 
+                    "content": "You are a JSON generator for resume analysis. Output only valid JSON with no explanations."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            "max_tokens": 600,
+            "temperature": 0.1,
+            "stop": ["<think>", "</think>", "```", "\n\n"]
+        }
+        
+        response = requests.post(EURI_API_URL, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        result = response.json()
+        ai_response = result['choices'][0]['message']['content']
+        
+        logger.info(f"Insights AI Response (first 100 chars): {ai_response[:100]}...")
+        
+        parsed = extract_json_from_response(ai_response)
+        
+        if parsed and validate_insights_data(parsed):
+            return parsed
+        else:
+            logger.warning("Failed to parse insights JSON, using fallback")
         
         # Fallback insights
         return generate_fallback_insights(resume_data, selected_industry)
