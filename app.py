@@ -89,7 +89,7 @@ if 'interview_questions' not in st.session_state:
 
 # EURI API configuration
 EURI_API_URL = "https://api.euron.one/api/v1/euri/chat/completions"
-
+api_key = os.getenv("EURI_API_KEY") 
 
 def call_euri_api(prompt, api_key):
     """
