@@ -183,7 +183,7 @@ def parse_resume_with_ai(resume_content):
     Your entire response must be valid JSON only.
     """
     
-    response = call_claude_api(prompt, 1200)
+    response = call_euri_api(prompt, 1200)
     return extract_json_from_response(response)
 
 def generate_resume_insights(resume_data):
@@ -209,7 +209,7 @@ def generate_resume_insights(resume_data):
     Your entire response must be valid JSON only.
     """
     
-    response = call_claude_api(prompt, 1000)
+    response = call_euri_api(prompt, 1000)
     return extract_json_from_response(response)
 
 def search_jobs_with_ai(job_title, location, experience=""):
@@ -245,8 +245,8 @@ def search_jobs_with_ai(job_title, location, experience=""):
 
     Make the jobs diverse in terms of companies, requirements, and match scores. Your entire response must be valid JSON only.
     """
-    
-    response = call_claude_api(prompt, 2000)
+
+    response = call_euri_api(prompt, 2000)
     return extract_json_from_response(response)
 
 def generate_interview_questions(job_title):
@@ -269,8 +269,8 @@ def generate_interview_questions(job_title):
 
     Include a mix of question types and difficulties. Your entire response must be valid JSON only.
     """
-    
-    response = call_claude_api(prompt, 1200)
+
+    response = call_euri_api(prompt, 1200)
     return extract_json_from_response(response)
 
 def evaluate_interview_answer(question, answer):
@@ -290,8 +290,8 @@ def evaluate_interview_answer(question, answer):
 
     Your entire response must be valid JSON only.
     """
-    
-    response = call_claude_api(prompt, 1000)
+
+    response = call_euri_api(prompt, 1000)
     return extract_json_from_response(response)
 
 # Header
@@ -575,8 +575,8 @@ elif page == "💬 AI Assistant":
         """
         
         with st.spinner("🤖 Thinking..."):
-            response = call_claude_api(chat_prompt, 800)
-            
+            response = call_euri_api(chat_prompt, 800)
+
             # Add assistant response
             st.session_state.chat_history.append({"role": "assistant", "content": response})
         
