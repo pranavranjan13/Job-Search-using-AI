@@ -231,7 +231,7 @@ def call_euri_api(prompt, max_retries=3):
     payload = {
         "model": "deepseek-r1-distill-llama-70b",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 2000,
+        "max_tokens": 1000,
         "temperature": 0.7
     }
     
@@ -497,7 +497,7 @@ def create_country_job_queries(job_title, country, city="", industry=None, time_
     # General queries without site restriction
     general_queries = [
         f'"{job_title}" {location_query} {search_terms[0]} "apply now"',
-        f'"{job_title}" {location_query} careers hiring 2024',
+        f'"{job_title}" {location_query} careers hiring',
         f'"{job_title}" {location_query} "we\'re hiring"'
     ]
     queries.extend(general_queries)
