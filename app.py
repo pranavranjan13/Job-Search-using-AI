@@ -75,7 +75,7 @@ def call_euri_api(prompt, api_key):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "eurichat-latest",
+        "model": "deepseek-r1-distill-llama-70b",
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
