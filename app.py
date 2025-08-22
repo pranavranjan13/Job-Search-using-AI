@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta
 import logging
 import hashlib
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,25 +58,103 @@ HEADERS = {
 TIME_FILTERS = {
     "Last 24 hours": "qdr:d",
     "Last week": "qdr:w",
-    "Last 2 weeks": "qdr:w2",
+    "Last 2 weeks": "qdr:w2", 
     "Last month": "qdr:m"
 }
 
-ATS_SITES = [
-    "greenhouse.io",
-    "lever.co", 
-    "ashbyhq.com",
-    "pinpointhq.com",
-    "workday.com",
-    "bamboohr.com",
-    "smartrecruiters.com",
-    "jobvite.com",
-    "careers.google.com",
-    "jobs.netflix.com",
-    "amazon.jobs",
-    "careers.microsoft.com",
-    "jobs.apple.com"
-]
+# Enhanced industry and domain options
+INDUSTRIES = {
+    "Technology": {
+        "domains": ["Software Engineering", "Data Science & Analytics", "DevOps & Cloud", "Cybersecurity", 
+                   "AI/Machine Learning", "Mobile Development", "Web Development", "Product Management",
+                   "UX/UI Design", "QA/Testing", "Technical Writing", "IT Support"],
+        "keywords": ["tech", "software", "developer", "engineer", "programming", "coding"]
+    },
+    "Finance & Banking": {
+        "domains": ["Investment Banking", "Financial Analysis", "Risk Management", "Accounting", 
+                   "Corporate Finance", "Trading", "Insurance", "Fintech", "Compliance", "Audit"],
+        "keywords": ["finance", "banking", "investment", "financial", "accounting", "analyst"]
+    },
+    "Healthcare & Medical": {
+        "domains": ["Clinical Research", "Healthcare IT", "Medical Device", "Pharmaceutical", 
+                   "Nursing", "Medical Administration", "Biotech", "Public Health", "Telemedicine"],
+        "keywords": ["healthcare", "medical", "clinical", "pharmaceutical", "biotech", "health"]
+    },
+    "Marketing & Sales": {
+        "domains": ["Digital Marketing", "Sales Development", "Brand Management", "Content Marketing",
+                   "Social Media", "SEO/SEM", "Marketing Analytics", "Business Development", "PR"],
+        "keywords": ["marketing", "sales", "business development", "brand", "digital marketing"]
+    },
+    "Education": {
+        "domains": ["K-12 Teaching", "Higher Education", "Corporate Training", "Instructional Design",
+                   "Educational Technology", "Curriculum Development", "Student Services"],
+        "keywords": ["education", "teaching", "training", "curriculum", "academic", "instructor"]
+    },
+    "Consulting": {
+        "domains": ["Management Consulting", "IT Consulting", "Strategy Consulting", "Operations",
+                   "Change Management", "Business Analysis", "Process Improvement"],
+        "keywords": ["consulting", "consultant", "strategy", "management", "advisory"]
+    },
+    "Manufacturing": {
+        "domains": ["Production Management", "Quality Assurance", "Supply Chain", "Industrial Engineering",
+                   "Maintenance", "Safety", "Lean Manufacturing", "Operations"],
+        "keywords": ["manufacturing", "production", "industrial", "operations", "supply chain"]
+    },
+    "Media & Entertainment": {
+        "domains": ["Content Creation", "Broadcasting", "Gaming", "Film/TV Production", "Music",
+                   "Publishing", "Digital Media", "Entertainment Marketing"],
+        "keywords": ["media", "entertainment", "content", "creative", "production", "broadcasting"]
+    },
+    "Retail & E-commerce": {
+        "domains": ["E-commerce", "Merchandising", "Inventory Management", "Customer Service",
+                   "Store Operations", "Supply Chain", "Online Marketing", "Retail Analytics"],
+        "keywords": ["retail", "ecommerce", "merchandising", "customer service", "store"]
+    },
+    "Non-Profit & Government": {
+        "domains": ["Program Management", "Policy Analysis", "Grant Writing", "Community Outreach",
+                   "Public Administration", "Social Services", "Advocacy", "Research"],
+        "keywords": ["nonprofit", "government", "public service", "policy", "social", "community"]
+    }
+}
+
+# Job board and ATS sites with better search patterns
+JOB_SITES = {
+    "ats_sites": [
+        "greenhouse.io",
+        "lever.co", 
+        "ashbyhq.com",
+        "pinpointhq.com",
+        "workday.com",
+        "bamboohr.com",
+        "smartrecruiters.com",
+        "jobvite.com"
+    ],
+    "company_sites": [
+        "careers.google.com",
+        "jobs.netflix.com",
+        "amazon.jobs",
+        "careers.microsoft.com",
+        "jobs.apple.com",
+        "careers.salesforce.com",
+        "jobs.facebook.com",
+        "careers.uber.com",
+        "careers.airbnb.com"
+    ],
+    "job_boards": [
+        "linkedin.com/jobs",
+        "indeed.com",
+        "glassdoor.com/Jobs",
+        "monster.com",
+        "ziprecruiter.com"
+    ],
+    "remote_sites": [
+        "remote.co",
+        "remoteok.io",
+        "weworkremotely.com",
+        "flexjobs.com",
+        "remoterocketship.com"
+    ]
+}
 
 # --- Utility Functions ---
 def get_text_from_file(uploaded_file):
@@ -166,16 +245,29 @@ def call_euri_api(prompt, max_retries=3):
     return None
 
 # --- AI Functions ---
-def parse_resume_with_ai(resume_text):
+def parse_resume_with_ai(resume_text, selected_industry=None):
     """Sends resume text to EURI AI for parsing into a structured JSON."""
+    industry_context = ""
+    if selected_industry:
+        domains = INDUSTRIES.get(selected_industry, {}).get('domains', [])
+        industry_context = f"""
+        
+        Industry Focus: {selected_industry}
+        Relevant Domains: {', '.join(domains)}
+        
+        When analyzing skills and experience, prioritize and highlight elements relevant to {selected_industry}.
+        """
+    
     prompt = f"""
     Analyze the following resume text and extract the information into a structured JSON format.
+    {industry_context}
     
     Requirements:
     - Extract all personal information, skills, experience, education, and achievements
     - Identify ATS optimization opportunities 
     - Provide skill categorization (technical, soft skills, certifications)
     - Format experience with quantifiable achievements where possible
+    - Assess industry alignment and suggest improvements
     
     Return a JSON object with these exact keys:
     - "name": string
@@ -186,10 +278,12 @@ def parse_resume_with_ai(resume_text):
     - "skills": array of strings
     - "technical_skills": array of strings  
     - "soft_skills": array of strings
+    - "industry_skills": array of strings (industry-specific skills)
     - "experience": array of objects with keys: "title", "company", "duration", "achievements" (array), "technologies" (array)
     - "education": array of objects with keys: "degree", "institution", "year", "gpa" (if available)
     - "certifications": array of strings
     - "projects": array of objects with keys: "name", "description", "technologies"
+    - "industry_alignment": number (0-100, how well aligned with selected industry)
     
     Resume Text:
     ---
@@ -215,16 +309,32 @@ def parse_resume_with_ai(resume_text):
         "skills": [],
         "technical_skills": [],
         "soft_skills": [],
+        "industry_skills": [],
         "experience": [],
         "education": [],
         "certifications": [],
-        "projects": []
+        "projects": [],
+        "industry_alignment": 0
     }
 
-def generate_resume_insights(resume_data):
+def generate_resume_insights(resume_data, selected_industry=None):
     """Generate comprehensive ATS-optimized insights for resume improvement."""
+    industry_context = ""
+    if selected_industry:
+        domains = INDUSTRIES.get(selected_industry, {}).get('domains', [])
+        keywords = INDUSTRIES.get(selected_industry, {}).get('keywords', [])
+        industry_context = f"""
+        
+        Target Industry: {selected_industry}
+        Key Domains: {', '.join(domains)}
+        Industry Keywords: {', '.join(keywords)}
+        
+        Provide industry-specific recommendations for {selected_industry} roles.
+        """
+    
     prompt = f"""
     Based on this resume data, provide comprehensive ATS optimization insights:
+    {industry_context}
     
     Resume Data: {json.dumps(resume_data, indent=2)}
     
@@ -234,17 +344,21 @@ def generate_resume_insights(resume_data):
     3. Format and structure improvements
     4. Content enhancement suggestions
     5. Industry-specific recommendations
+    6. Skills gap analysis for target industry
     
     Return JSON with these exact keys:
     - "ats_score": number (0-100)
     - "overall_score": number (0-100) 
+    - "industry_fit_score": number (0-100, alignment with target industry)
     - "strengths": array of 3-5 detailed strings
     - "ats_issues": array of objects with keys: "issue", "solution", "priority" (High/Medium/Low)
     - "keyword_suggestions": array of strings (relevant industry keywords missing)
+    - "skills_to_add": array of strings (in-demand skills for target industry)
     - "format_improvements": array of strings
     - "content_improvements": array of objects with keys: "section", "suggestion", "example"
     - "industry_recommendations": array of strings
     - "action_items": array of prioritized improvement tasks
+    - "competitive_analysis": string (how resume compares to industry standards)
     
     IMPORTANT: Return ONLY a valid JSON object. No additional text.
     """
@@ -254,8 +368,8 @@ def generate_resume_insights(resume_data):
         return extract_json_from_response(response_text)
     return None
 
-def search_jobs_with_ai(job_title, location, resume_data=None):
-    """Search for jobs using EURI AI with resume matching if available."""
+def search_jobs_with_ai(job_title, location, industry=None, domain=None, resume_data=None):
+    """Search for jobs using EURI AI with industry and resume matching."""
     resume_context = ""
     if resume_data:
         resume_context = f"""
@@ -264,19 +378,31 @@ def search_jobs_with_ai(job_title, location, resume_data=None):
         - Skills: {', '.join(resume_data.get('skills', []))}
         - Experience Level: {len(resume_data.get('experience', []))} positions
         - Technical Skills: {', '.join(resume_data.get('technical_skills', []))}
+        - Industry Skills: {', '.join(resume_data.get('industry_skills', []))}
+        """
+    
+    industry_context = ""
+    if industry and domain:
+        industry_context = f"""
+        
+        Target Industry: {industry}
+        Specific Domain: {domain}
+        Industry Keywords: {', '.join(INDUSTRIES.get(industry, {}).get('keywords', []))}
         """
     
     prompt = f"""
-    Generate 10 realistic and diverse job listings for "{job_title}" positions in "{location}".
+    Generate 12 realistic and diverse job listings for "{job_title}" positions in "{location}".
     {resume_context}
+    {industry_context}
     
     Make the jobs realistic with:
-    - Real company names (mix of startups, mid-size, and enterprises)
+    - Real company names from {industry if industry else 'various industries'} (mix of startups, mid-size, and enterprises)
     - Accurate salary ranges for the location and role
     - Realistic job descriptions with current industry trends
-    - Relevant requirements and qualifications
-    - Mix of experience levels
+    - Relevant requirements and qualifications for {domain if domain else 'the role'}
+    - Mix of experience levels (entry, mid, senior)
     - Different company sizes and industries
+    - Industry-specific technologies and skills
     
     Return JSON with key "jobs" containing an array of job objects:
     - "id": unique string
@@ -296,6 +422,8 @@ def search_jobs_with_ai(job_title, location, resume_data=None):
     - "match_reasons": array of strings (why it matches user's profile)
     - "company_size": string (Startup/Mid-size/Enterprise)
     - "industry": string
+    - "domain": string (specific domain within industry)
+    - "key_technologies": array of relevant technologies
     
     IMPORTANT: Return ONLY a valid JSON object.
     """
@@ -305,94 +433,12 @@ def search_jobs_with_ai(job_title, location, resume_data=None):
         return extract_json_from_response(response_text)
     return None
 
-# --- Web Scraping Functions ---
-def scrape_google_for_ats(search_query, time_filter="qdr:d"):
-    """Scrapes Google for job listings from ATS sites."""
-    encoded_query = quote_plus(search_query)
-    search_url = f"https://www.google.com/search?q={encoded_query}&tbs={time_filter}&num=20"
+# --- Enhanced Web Scraping Functions ---
+def create_job_search_queries(job_title, location_type, location_text, industry, domain, time_filter):
+    """Create comprehensive search queries for job scraping."""
+    queries = []
     
-    jobs = []
-    try:
-        response = requests.get(search_url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Multiple selectors for different Google result formats
-        selectors = ['div.g', 'div[data-ved]', '.rc']
-        
-        for selector in selectors:
-            results = soup.select(selector)
-            if results:
-                break
-        
-        for result in results[:15]:  # Limit to prevent overwhelming
-            title_elem = result.find('h3')
-            link_elem = result.find('a')
-            snippet_elem = result.find(['span', 'div'], class_=lambda x: x and ('st' in x or 'snippet' in x.lower()))
-            
-            if not snippet_elem:
-                snippet_elem = result.find('div', class_=lambda x: x and 'VwiC3b' in x)
-            
-            if title_elem and link_elem and link_elem.get('href', '').startswith('http'):
-                title = title_elem.get_text(strip=True)
-                link = link_elem['href']
-                snippet = snippet_elem.get_text(strip=True) if snippet_elem else "No description available."
-                
-                # Filter for job-related content
-                job_indicators = ['job', 'career', 'position', 'hiring', 'vacancy', 'employment']
-                if any(indicator in title.lower() for indicator in job_indicators) or \
-                   any(indicator in link.lower() for indicator in job_indicators):
-                    
-                    # Determine source from URL
-                    source = "Unknown"
-                    for site in ATS_SITES:
-                        if site.split('.')[0] in link:
-                            source = site.split('.')[0].title()
-                            break
-                    
-                    jobs.append({
-                        "title": title,
-                        "link": link,
-                        "snippet": snippet[:300] + "..." if len(snippet) > 300 else snippet,
-                        "source": source,
-                        "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-                    })
-        
-        # Remove duplicates based on link
-        unique_jobs = {job['link']: job for job in jobs}.values()
-        return list(unique_jobs)
-        
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Could not scrape for query '{search_query}'. Reason: {e}")
-        return []
-
-def scrape_remote_sites(job_title, time_filter_days=1):
-    """Scrapes remote job sites directly."""
-    jobs = []
-    
-    # Remote job sites to scrape
-    remote_sites = [
-        f"site:remote.co \"{job_title}\"",
-        f"site:remoteok.io \"{job_title}\"",
-        f"site:weworkremotely.com \"{job_title}\"",
-        f"site:flexjobs.com \"{job_title}\" remote"
-    ]
-    
-    time_filters = {1: "qdr:d", 7: "qdr:w", 14: "qdr:w2", 30: "qdr:m"}
-    time_filter = time_filters.get(time_filter_days, "qdr:d")
-    
-    for site_query in remote_sites:
-        site_jobs = scrape_google_for_ats(site_query, time_filter)
-        jobs.extend(site_jobs)
-    
-    return jobs
-
-def run_comprehensive_scraper(job_title, location_type, location_text="", time_duration="Last 24 hours"):
-    """Comprehensive job scraping from multiple sources."""
-    time_filter = TIME_FILTERS.get(time_duration, "qdr:d")
-    
-    # Build location query
+    # Base job title with location
     location_query = ""
     if location_type == "Remote":
         location_query = "remote work from home"
@@ -401,88 +447,281 @@ def run_comprehensive_scraper(job_title, location_type, location_text="", time_d
     elif location_type == "On-site" and location_text:
         location_query = f"\"{location_text}\" onsite"
     
-    # Build search queries for different ATS sites
-    search_queries = []
+    # Industry-specific keywords
+    industry_keywords = []
+    if industry and industry in INDUSTRIES:
+        industry_keywords = INDUSTRIES[industry]['keywords']
     
-    # ATS-specific queries
-    for site in ATS_SITES[:8]:  # Limit to prevent rate limiting
-        query = f"\"{job_title}\" site:{site} {location_query} apply".strip()
-        search_queries.append(query)
+    # Create queries for different site types
+    all_sites = (JOB_SITES['ats_sites'] + JOB_SITES['company_sites'] + 
+                JOB_SITES['job_boards'])
     
-    # General job board queries
-    general_queries = [
-        f"\"{job_title}\" {location_query} jobs apply now",
-        f"\"{job_title}\" {location_query} hiring careers",
-        f"\"{job_title}\" {location_query} \"we're hiring\"",
-    ]
-    search_queries.extend(general_queries)
-    
-    # Add LinkedIn and Indeed specific searches
+    # Add remote sites if applicable
     if location_type == "Remote":
-        search_queries.extend([
-            f"site:linkedin.com/jobs \"{job_title}\" remote",
-            f"site:indeed.com \"{job_title}\" remote"
-        ])
+        all_sites.extend(JOB_SITES['remote_sites'])
+    
+    # Limit to prevent overwhelming
+    selected_sites = all_sites[:10]
+    
+    for site in selected_sites:
+        # Basic job title query
+        base_query = f'"{job_title}" site:{site} {location_query} apply'
+        queries.append(base_query.strip())
+        
+        # Industry-specific query
+        if industry_keywords:
+            for keyword in industry_keywords[:2]:  # Limit keywords
+                industry_query = f'"{job_title}" {keyword} site:{site} {location_query}'
+                queries.append(industry_query.strip())
+    
+    # Add general queries without site restriction
+    general_queries = [
+        f'"{job_title}" {location_query} jobs "apply now"',
+        f'"{job_title}" {location_query} careers hiring',
+        f'"{job_title}" {location_query} "we\'re hiring"'
+    ]
+    
+    # Add industry-specific general queries
+    if industry_keywords:
+        for keyword in industry_keywords[:2]:
+            general_queries.append(f'"{job_title}" {keyword} {location_query} jobs')
+    
+    queries.extend(general_queries)
+    
+    # Remove duplicates and limit total queries
+    unique_queries = list(set(queries))[:15]  # Limit to 15 queries
+    return unique_queries
+
+def enhanced_google_scraper(search_query, time_filter="qdr:d"):
+    """Enhanced Google scraper with better result extraction."""
+    try:
+        encoded_query = quote_plus(search_query)
+        search_url = f"https://www.google.com/search?q={encoded_query}&tbs={time_filter}&num=20"
+        
+        # Add random delay to avoid rate limiting
+        time.sleep(random.uniform(1, 3))
+        
+        # Use session for better handling
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        
+        response = session.get(search_url, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        jobs = []
+        
+        # Multiple selectors for different Google layouts
+        result_selectors = [
+            'div.g',  # Standard results
+            'div[data-ved]',  # Alternative layout
+            '.rc',  # Classic layout
+            'div.MjjYud',  # New layout
+        ]
+        
+        results = []
+        for selector in result_selectors:
+            results = soup.select(selector)
+            if len(results) > 3:  # Found meaningful results
+                break
+        
+        for result in results[:12]:  # Limit per query
+            try:
+                # Find title
+                title_elem = result.find('h3')
+                if not title_elem:
+                    continue
+                
+                # Find link
+                link_elem = result.find('a')
+                if not link_elem or not link_elem.get('href', '').startswith('http'):
+                    continue
+                
+                # Find snippet/description
+                snippet_elem = (
+                    result.find('span', class_=lambda x: x and 'aCOpRe' in x) or
+                    result.find('div', class_=lambda x: x and 'VwiC3b' in x) or
+                    result.find('div', class_=lambda x: x and 'IsZvec' in x) or
+                    result.find('span', class_=lambda x: x and 'st' in x)
+                )
+                
+                title = title_elem.get_text(strip=True)
+                link = link_elem['href']
+                snippet = snippet_elem.get_text(strip=True) if snippet_elem else "No description available."
+                
+                # Filter for job-related content
+                job_indicators = ['job', 'career', 'position', 'hiring', 'vacancy', 'employment', 'work', 'opportunity']
+                title_lower = title.lower()
+                link_lower = link.lower()
+                
+                is_job_related = (
+                    any(indicator in title_lower for indicator in job_indicators) or
+                    any(indicator in link_lower for indicator in job_indicators) or
+                    'apply' in title_lower or
+                    'apply' in link_lower
+                )
+                
+                if is_job_related and len(title) > 10:  # Basic quality filter
+                    # Determine source from URL
+                    source = "Unknown"
+                    for site_category in JOB_SITES.values():
+                        for site in site_category:
+                            if site.split('.')[0] in link_lower:
+                                source = site.split('.')[0].title()
+                                break
+                        if source != "Unknown":
+                            break
+                    
+                    jobs.append({
+                        "title": title,
+                        "link": link,
+                        "snippet": snippet[:300] + "..." if len(snippet) > 300 else snippet,
+                        "source": source,
+                        "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "query": search_query
+                    })
+                    
+            except Exception as e:
+                logger.warning(f"Error processing result: {e}")
+                continue
+        
+        return jobs
+        
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Scraping failed for query '{search_query}': {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error in scraping: {e}")
+        return []
+
+def run_enhanced_job_scraper(job_title, location_type, location_text="", industry=None, domain=None, time_duration="Last 24 hours"):
+    """Enhanced job scraping with industry focus and better error handling."""
+    time_filter = TIME_FILTERS.get(time_duration, "qdr:d")
+    
+    # Create comprehensive search queries
+    search_queries = create_job_search_queries(
+        job_title, location_type, location_text, industry, domain, time_filter
+    )
     
     all_jobs = []
+    completed_queries = 0
+    total_queries = len(search_queries)
     
-    # Use ThreadPoolExecutor for concurrent scraping
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+    # Create progress placeholder
+    progress_placeholder = st.empty()
+    
+    # Use ThreadPoolExecutor for concurrent scraping with limited workers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         future_to_query = {}
         
-        for query in search_queries[:12]:  # Limit concurrent requests
-            future = executor.submit(scrape_google_for_ats, query, time_filter)
+        # Submit all scraping tasks
+        for query in search_queries:
+            future = executor.submit(enhanced_google_scraper, query, time_filter)
             future_to_query[future] = query
         
-        # Add remote site scraping if applicable
-        if location_type == "Remote":
-            time_days = {"Last 24 hours": 1, "Last week": 7, "Last 2 weeks": 14, "Last month": 30}
-            days = time_days.get(time_duration, 1)
-            future = executor.submit(scrape_remote_sites, job_title, days)
-            future_to_query[future] = "Remote Sites"
-        
-        # Collect results with timeout
-        for future in concurrent.futures.as_completed(future_to_query, timeout=60):
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_query, timeout=120):
             query = future_to_query[future]
+            completed_queries += 1
+            
+            # Update progress
+            progress = completed_queries / total_queries
+            progress_placeholder.progress(
+                progress, 
+                text=f"Searching... {completed_queries}/{total_queries} sources checked"
+            )
+            
             try:
-                jobs = future.result(timeout=15)
+                jobs = future.result(timeout=20)
                 if jobs:
                     all_jobs.extend(jobs)
-                    logger.info(f"Scraped {len(jobs)} jobs from: {query}")
+                    logger.info(f"Found {len(jobs)} jobs from: {query}")
+                    
+            except concurrent.futures.TimeoutError:
+                logger.warning(f'Query "{query}" timed out')
             except Exception as exc:
                 logger.warning(f'Query "{query}" generated exception: {exc}')
     
-    # Remove duplicates and sort by relevance
+    # Clear progress
+    progress_placeholder.empty()
+    
+    # Enhanced deduplication and filtering
     unique_jobs = {}
     for job in all_jobs:
+        # Create hash based on title and company (extracted from title or link)
+        title_clean = job['title'].lower().strip()
+        link_clean = job['link'].lower()
+        
+        # Try to extract company from title or link
+        company_identifier = ""
+        if " at " in title_clean:
+            company_identifier = title_clean.split(" at ")[-1]
+        elif "careers." in link_clean:
+            company_identifier = link_clean.split("careers.")[1].split(".")[0]
+        
         job_hash = hashlib.md5(
-            (job['title'] + job['link']).encode()
+            (title_clean + company_identifier + job['link']).encode()
         ).hexdigest()
         
+        # Keep the job with better source if duplicate
         if job_hash not in unique_jobs:
             unique_jobs[job_hash] = job
+        else:
+            # Keep job from better source
+            existing_source = unique_jobs[job_hash]['source'].lower()
+            new_source = job['source'].lower()
+            
+            preferred_sources = ['greenhouse', 'lever', 'linkedin', 'indeed']
+            if any(source in new_source for source in preferred_sources):
+                unique_jobs[job_hash] = job
     
     final_jobs = list(unique_jobs.values())
     
-    # Sort by title relevance (basic scoring)
-    def relevance_score(job):
+    # Enhanced relevance scoring
+    def calculate_relevance_score(job):
         title_lower = job['title'].lower()
         job_title_lower = job_title.lower()
+        snippet_lower = job['snippet'].lower()
         score = 0
         
-        # Exact match gets highest score
+        # Exact title match
         if job_title_lower in title_lower:
-            score += 10
+            score += 20
         
-        # Word matches
+        # Word matches in title
         job_words = job_title_lower.split()
-        for word in job_words:
-            if word in title_lower:
-                score += 2
+        title_words = title_lower.split()
         
-        return score
+        for word in job_words:
+            if len(word) > 2:  # Skip very short words
+                if word in title_words:
+                    score += 10
+                elif word in title_lower:
+                    score += 5
+        
+        # Industry relevance
+        if industry and industry in INDUSTRIES:
+            industry_keywords = INDUSTRIES[industry]['keywords']
+            for keyword in industry_keywords:
+                if keyword in title_lower or keyword in snippet_lower:
+                    score += 3
+        
+        # Source quality bonus
+        source_lower = job['source'].lower()
+        if source_lower in ['greenhouse', 'lever', 'linkedin']:
+            score += 5
+        elif source_lower in ['indeed', 'glassdoor']:
+            score += 3
+        
+        # Penalize very long titles (likely spam)
+        if len(job['title']) > 100:
+            score -= 5
+        
+        return max(0, score)  # Ensure non-negative
     
-    final_jobs.sort(key=relevance_score, reverse=True)
+    # Sort by relevance score
+    final_jobs.sort(key=calculate_relevance_score, reverse=True)
+    
     return final_jobs
 
 # --- Streamlit UI ---
@@ -508,6 +747,25 @@ def render_resume_analyzer():
     st.header("📄 Resume Analysis & ATS Optimization")
     st.markdown("Upload your resume for comprehensive AI analysis and ATS optimization tips.")
     
+    # Industry selection
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_industry = st.selectbox(
+            "Target Industry",
+            ["None"] + list(INDUSTRIES.keys()),
+            help="Select your target industry for tailored analysis"
+        )
+    
+    with col2:
+        selected_domain = None
+        if selected_industry != "None":
+            domains = INDUSTRIES[selected_industry]['domains']
+            selected_domain = st.selectbox(
+                "Specific Domain",
+                ["Any"] + domains,
+                help="Choose a specific domain within your industry"
+            )
+    
     uploaded_file = st.file_uploader(
         "Choose your resume file",
         type=['pdf', 'docx', 'txt'],
@@ -523,14 +781,15 @@ def render_resume_analyzer():
                 file_content = get_text_from_file(uploaded_file)
                 
                 if file_content and len(file_content.strip()) > 50:
-                    # Parse resume
-                    resume_data = parse_resume_with_ai(file_content)
+                    # Parse resume with industry context
+                    industry_for_analysis = selected_industry if selected_industry != "None" else None
+                    resume_data = parse_resume_with_ai(file_content, industry_for_analysis)
                     
                     if resume_data and resume_data.get('name') != 'Could not extract':
                         st.session_state.resume_data = resume_data
                         
-                        # Generate insights
-                        insights = generate_resume_insights(resume_data)
+                        # Generate insights with industry context
+                        insights = generate_resume_insights(resume_data, industry_for_analysis)
                         if insights:
                             st.session_state.resume_insights = insights
                         
@@ -545,26 +804,30 @@ def render_resume_analyzer():
         display_resume_analysis()
 
 def display_resume_analysis():
-    """Display resume analysis results."""
+    """Display resume analysis results with industry insights."""
     resume_data = st.session_state.resume_data
     insights = st.session_state.resume_insights
     
     st.subheader("📊 Resume Overview")
     
     # Basic info in columns
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Name", resume_data.get('name', 'N/A'))
     with col2:
         st.metric("Experience", f"{len(resume_data.get('experience', []))} positions")
     with col3:
         st.metric("Skills", f"{len(resume_data.get('skills', []))} total")
+    with col4:
+        industry_alignment = resume_data.get('industry_alignment', 0)
+        st.metric("Industry Fit", f"{industry_alignment}%", 
+                 delta="Strong" if industry_alignment > 70 else "Needs Work")
     
     # Scores and insights
     if insights:
-        st.subheader("🎯 ATS Optimization Scores")
+        st.subheader("🎯 Comprehensive Scoring")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             ats_score = insights.get('ats_score', 0)
             st.metric("ATS Compatibility", f"{ats_score}%", 
@@ -573,9 +836,22 @@ def display_resume_analysis():
             overall_score = insights.get('overall_score', 0)
             st.metric("Overall Score", f"{overall_score}%",
                      delta="Excellent" if overall_score > 80 else "Room for Improvement")
+        with col3:
+            industry_fit = insights.get('industry_fit_score', 0)
+            st.metric("Industry Alignment", f"{industry_fit}%",
+                     delta="Great Fit" if industry_fit > 75 else "Could Improve")
+        
+        # Industry-specific skills
+        if resume_data.get('industry_skills'):
+            st.subheader("🎯 Industry-Relevant Skills")
+            skills_cols = st.columns(3)
+            industry_skills = resume_data.get('industry_skills', [])
+            for i, skill in enumerate(industry_skills[:9]):  # Show up to 9 skills
+                with skills_cols[i % 3]:
+                    st.success(f"✅ {skill}")
         
         # Detailed insights in tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["🎯 ATS Issues", "💪 Strengths", "🔧 Improvements", "📝 Action Items"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 ATS Issues", "💪 Strengths", "🔧 Improvements", "📈 Skills Gap", "📝 Action Items"])
         
         with tab1:
             st.subheader("ATS Optimization Issues")
@@ -602,10 +878,38 @@ def display_resume_analysis():
                 st.markdown("---")
         
         with tab4:
+            st.subheader("Skills Development Recommendations")
+            
+            # Missing keywords
+            st.markdown("**🔑 Missing Industry Keywords:**")
+            keywords = insights.get('keyword_suggestions', [])
+            if keywords:
+                keyword_cols = st.columns(3)
+                for i, keyword in enumerate(keywords):
+                    with keyword_cols[i % 3]:
+                        st.info(keyword)
+            else:
+                st.success("Great keyword coverage!")
+            
+            # Skills to add
+            st.markdown("**🚀 In-Demand Skills to Consider:**")
+            skills_to_add = insights.get('skills_to_add', [])
+            if skills_to_add:
+                for skill in skills_to_add:
+                    st.markdown(f"📈 {skill}")
+            else:
+                st.success("Skills align well with industry demands!")
+        
+        with tab5:
             st.subheader("Prioritized Action Items")
             action_items = insights.get('action_items', [])
             for i, item in enumerate(action_items, 1):
                 st.markdown(f"{i}. {item}")
+            
+            # Competitive analysis
+            if insights.get('competitive_analysis'):
+                st.subheader("📊 Market Position")
+                st.info(insights['competitive_analysis'])
     
     # Resume details in expander
     with st.expander("📄 Extracted Resume Details"):
@@ -613,25 +917,48 @@ def display_resume_analysis():
 
 def render_live_job_search():
     st.header("🔍 Live Job Search Engine")
-    st.markdown("Scrape live job postings from major ATS platforms and job boards")
+    st.markdown("Scrape live job postings from major ATS platforms and job boards with industry focus")
     
     with st.form("live_job_search"):
         col1, col2 = st.columns(2)
         
         with col1:
-            job_title = st.text_input("Job Title", "Data Scientist", help="Enter the job title you're looking for")
+            job_title = st.text_input("Job Title", "Software Engineer", 
+                                    help="Enter the specific job title you're looking for")
+            
+            # Industry selection
+            selected_industry = st.selectbox(
+                "Industry",
+                ["Any Industry"] + list(INDUSTRIES.keys()),
+                help="Select industry for targeted job search"
+            )
+        
+        with col2:
             location_type = st.selectbox(
                 "Work Type",
                 ["Remote", "On-site", "Hybrid"],
                 help="Select preferred work arrangement"
             )
+            
+            # Domain selection (conditional)
+            selected_domain = None
+            if selected_industry != "Any Industry":
+                domains = INDUSTRIES[selected_industry]['domains']
+                selected_domain = st.selectbox(
+                    f"{selected_industry} Domain",
+                    ["Any Domain"] + domains,
+                    help=f"Choose a specific domain within {selected_industry}"
+                )
         
-        with col2:
+        col3, col4 = st.columns(2)
+        with col3:
             time_duration = st.selectbox(
                 "Time Range",
                 list(TIME_FILTERS.keys()),
                 help="How far back to search for job postings"
             )
+        
+        with col4:
             location_text = st.text_input(
                 "Location", 
                 "San Francisco, CA",
@@ -644,83 +971,156 @@ def render_live_job_search():
         if location_type in ["On-site", "Hybrid"] and not location_text.strip():
             st.error("❌ Please provide a location for On-site/Hybrid searches.")
         else:
+            # Prepare parameters
+            industry_param = selected_industry if selected_industry != "Any Industry" else None
+            domain_param = selected_domain if selected_domain and selected_domain != "Any Domain" else None
+            
+            # Show search parameters
+            search_params = []
+            search_params.append(f"**Job Title:** {job_title}")
+            search_params.append(f"**Work Type:** {location_type}")
+            if location_text:
+                search_params.append(f"**Location:** {location_text}")
+            if industry_param:
+                search_params.append(f"**Industry:** {industry_param}")
+            if domain_param:
+                search_params.append(f"**Domain:** {domain_param}")
+            search_params.append(f"**Time Range:** {time_duration}")
+            
+            st.info("🔍 **Searching with parameters:**\n" + " • ".join(search_params))
+            
             with st.spinner(f"🔍 Scraping live job listings from the {time_duration.lower()}..."):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # Update progress
-                progress_bar.progress(25)
-                status_text.text("Searching ATS platforms...")
-                
-                found_jobs = run_comprehensive_scraper(
-                    job_title, location_type, location_text, time_duration
+                found_jobs = run_enhanced_job_scraper(
+                    job_title, location_type, location_text, 
+                    industry_param, domain_param, time_duration
                 )
-                
-                progress_bar.progress(100)
-                status_text.text("Search completed!")
                 
                 st.session_state.scraped_jobs = found_jobs
                 
                 if found_jobs:
                     st.success(f"✅ Found {len(found_jobs)} unique job listings!")
-                    display_scraped_jobs(found_jobs)
+                    display_scraped_jobs(found_jobs, industry_param)
                 else:
-                    st.warning(f"⚠️ No job listings found matching your criteria from the {time_duration.lower()}. Try:")
-                    st.markdown("• Broadening your search terms")
-                    st.markdown("• Extending the time range")
-                    st.markdown("• Trying different job titles or locations")
+                    st.warning(f"⚠️ No job listings found matching your criteria from the {time_duration.lower()}.")
+                    
+                    # Suggestions for better results
+                    st.markdown("**💡 Try these suggestions:**")
+                    st.markdown("• Use broader job titles (e.g., 'Engineer' instead of 'Senior Backend Engineer')")
+                    st.markdown("• Extend the time range to 'Last week' or 'Last month'")
+                    st.markdown("• Try 'Any Industry' if you selected a specific industry")
+                    st.markdown("• Check if the job title spelling is correct")
+                    st.markdown("• Try related job titles or synonyms")
 
-def display_scraped_jobs(jobs):
-    """Display scraped job results."""
+def display_scraped_jobs(jobs, industry=None):
+    """Display scraped job results with enhanced filtering."""
     if not jobs:
         return
     
     st.markdown(f"### 📋 Found {len(jobs)} Job Listings")
     
-    # Filters
-    col1, col2 = st.columns(2)
+    # Enhanced filters
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
+        source_options = list(set([job['source'] for job in jobs]))
         source_filter = st.multiselect(
             "Filter by Source",
-            options=list(set([job['source'] for job in jobs])),
-            default=list(set([job['source'] for job in jobs]))
+            options=source_options,
+            default=source_options,
+            help="Select job sources to include"
         )
+    
     with col2:
-        search_filter = st.text_input("Search in titles", placeholder="e.g., senior, remote")
+        search_filter = st.text_input(
+            "Search in titles", 
+            placeholder="e.g., senior, remote, python",
+            help="Search within job titles"
+        )
+    
+    with col3:
+        sort_option = st.selectbox(
+            "Sort by",
+            ["Relevance (Default)", "Source A-Z", "Title A-Z", "Recently Scraped"],
+            help="Choose how to sort the results"
+        )
     
     # Apply filters
     filtered_jobs = jobs
+    
     if source_filter:
         filtered_jobs = [job for job in filtered_jobs if job['source'] in source_filter]
+    
     if search_filter:
-        filtered_jobs = [job for job in filtered_jobs if search_filter.lower() in job['title'].lower()]
+        search_terms = search_filter.lower().split()
+        filtered_jobs = [
+            job for job in filtered_jobs 
+            if any(term in job['title'].lower() or term in job['snippet'].lower() 
+                  for term in search_terms)
+        ]
+    
+    # Apply sorting
+    if sort_option == "Source A-Z":
+        filtered_jobs.sort(key=lambda x: x['source'])
+    elif sort_option == "Title A-Z":
+        filtered_jobs.sort(key=lambda x: x['title'])
+    elif sort_option == "Recently Scraped":
+        filtered_jobs.sort(key=lambda x: x['scraped_at'], reverse=True)
+    # Default is already relevance sorted
+    
+    if not filtered_jobs:
+        st.warning("No jobs match your current filters. Try adjusting the criteria.")
+        return
     
     st.markdown(f"*Showing {len(filtered_jobs)} of {len(jobs)} jobs*")
     
-    # Display jobs
+    # Display jobs in a more organized way
     for i, job in enumerate(filtered_jobs):
         with st.container():
-            st.markdown("---")
+            if i > 0:
+                st.markdown("---")
             
-            col1, col2 = st.columns([3, 1])
+            # Header row
+            col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
                 st.markdown(f"**{job['title']}**")
-                st.markdown(f"🏢 Source: {job['source']} • ⏰ Scraped: {job.get('scraped_at', 'Unknown')}")
+                
+                # Add industry relevance badge if applicable
+                if industry:
+                    title_lower = job['title'].lower()
+                    industry_keywords = INDUSTRIES.get(industry, {}).get('keywords', [])
+                    relevant_keywords = [kw for kw in industry_keywords if kw in title_lower]
+                    if relevant_keywords:
+                        st.markdown(f"🎯 *Matches: {', '.join(relevant_keywords)}*")
+            
             with col2:
+                st.markdown(f"**Source:** {job['source']}")
+            
+            with col3:
                 st.link_button("📄 View & Apply", job['link'], use_container_width=True)
             
-            # Snippet
-            if job.get('snippet'):
-                st.markdown(f"*{job['snippet']}*")
+            # Description with snippet
+            if job.get('snippet') and job['snippet'] != "No description available.":
+                with st.expander("📝 Job Description Preview"):
+                    st.markdown(job['snippet'])
+            
+            # Metadata
+            st.caption(f"⏰ Scraped: {job.get('scraped_at', 'Unknown')} | 🔍 Query: {job.get('query', 'N/A')[:50]}...")
 
 def render_ai_job_matching():
     st.header("💼 AI Job Matching")
-    st.markdown("Get personalized job recommendations powered by AI")
+    st.markdown("Get personalized job recommendations powered by AI with industry focus")
     
     # Show resume status
     if st.session_state.resume_data:
         st.success("✅ Resume loaded - AI will provide personalized matches!")
-        st.info(f"👤 {st.session_state.resume_data.get('name', 'User')} | 🎯 {len(st.session_state.resume_data.get('skills', []))} skills detected")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"👤 {st.session_state.resume_data.get('name', 'User')}")
+        with col2:
+            st.info(f"🎯 {len(st.session_state.resume_data.get('skills', []))} skills detected")
+        with col3:
+            industry_alignment = st.session_state.resume_data.get('industry_alignment', 0)
+            st.info(f"📊 Industry fit: {industry_alignment}%")
     else:
         st.info("💡 Upload your resume in the Resume Analyzer for personalized matches!")
     
@@ -728,10 +1128,24 @@ def render_ai_job_matching():
         col1, col2 = st.columns(2)
         
         with col1:
+            # Smart default based on resume
+            default_title = "Software Engineer"
+            if st.session_state.resume_data:
+                experience = st.session_state.resume_data.get('experience', [])
+                if experience and experience[0].get('title'):
+                    default_title = experience[0]['title']
+            
             job_title = st.text_input(
                 "Job Title",
-                value=st.session_state.resume_data.get('experience', [{}])[0].get('title', 'Software Engineer') if st.session_state.resume_data else 'Software Engineer',
+                value=default_title,
                 help="AI will find jobs matching this title"
+            )
+            
+            # Industry selection
+            selected_industry = st.selectbox(
+                "Target Industry",
+                ["Any Industry"] + list(INDUSTRIES.keys()),
+                help="Select industry for focused job matching"
             )
         
         with col2:
@@ -740,22 +1154,38 @@ def render_ai_job_matching():
                 "San Francisco, CA",
                 help="City, state or 'Remote' for remote positions"
             )
+            
+            # Domain selection
+            selected_domain = None
+            if selected_industry != "Any Industry":
+                domains = INDUSTRIES[selected_industry]['domains']
+                selected_domain = st.selectbox(
+                    f"{selected_industry} Domain",
+                    ["Any Domain"] + domains,
+                    help=f"Choose specific domain within {selected_industry}"
+                )
         
         submitted = st.form_submit_button("🤖 Get AI Job Matches", type="primary")
     
     if submitted:
+        # Prepare parameters
+        industry_param = selected_industry if selected_industry != "Any Industry" else None
+        domain_param = selected_domain if selected_domain and selected_domain != "Any Domain" else None
+        
         with st.spinner("🤖 AI is finding the best job matches for you..."):
-            jobs_data = search_jobs_with_ai(job_title, location, st.session_state.resume_data)
+            jobs_data = search_jobs_with_ai(
+                job_title, location, industry_param, domain_param, st.session_state.resume_data
+            )
             
             if jobs_data and jobs_data.get("jobs"):
                 st.session_state.ai_jobs = jobs_data["jobs"]
                 st.success(f"✅ AI found {len(jobs_data['jobs'])} personalized job matches!")
-                display_ai_jobs(jobs_data["jobs"])
+                display_ai_jobs(jobs_data["jobs"], industry_param)
             else:
                 st.error("❌ AI job search failed. Please try again with different parameters.")
 
-def display_ai_jobs(jobs):
-    """Display AI-generated job matches."""
+def display_ai_jobs(jobs, industry=None):
+    """Display AI-generated job matches with enhanced features."""
     if not jobs:
         return
     
@@ -764,8 +1194,8 @@ def display_ai_jobs(jobs):
     
     st.markdown(f"### 🎯 AI Job Matches")
     
-    # Filter options
-    col1, col2, col3 = st.columns(3)
+    # Enhanced filter options
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         min_salary = st.number_input("Min Salary ($)", min_value=0, max_value=500000, value=0, step=5000)
     with col2:
@@ -780,13 +1210,16 @@ def display_ai_jobs(jobs):
             ["Remote", "Hybrid", "On-site"],
             default=["Remote", "Hybrid", "On-site"]
         )
+    with col4:
+        min_match_score = st.slider("Min Match Score", 0, 100, 70, help="Filter by minimum match percentage")
     
     # Apply filters
     filtered_jobs = []
     for job in jobs_sorted:
         if (job.get('salary_min', 0) >= min_salary and 
             job.get('company_size', '') in company_size_filter and
-            job.get('remote_type', '') in remote_type_filter):
+            job.get('remote_type', '') in remote_type_filter and
+            job.get('match_score', 0) >= min_match_score):
             filtered_jobs.append(job)
     
     if not filtered_jobs:
@@ -795,57 +1228,86 @@ def display_ai_jobs(jobs):
     
     st.markdown(f"*Showing {len(filtered_jobs)} of {len(jobs)} jobs*")
     
-    # Display jobs
+    # Display jobs with enhanced information
     for job in filtered_jobs:
         with st.container():
             st.markdown("---")
             
-            # Header with match score
-            col1, col2 = st.columns([4, 1])
+            # Header with match score and key info
+            col1, col2 = st.columns([3, 1])
             with col1:
                 st.markdown(f"### {job.get('title', 'N/A')}")
-                st.markdown(f"🏢 **{job.get('company', 'N/A')}** • 📍 {job.get('location', 'N/A')} • 💼 {job.get('remote_type', 'N/A')}")
+                
+                # Company and location info
+                company_info = f"🏢 **{job.get('company', 'N/A')}**"
+                if job.get('company_size'):
+                    company_info += f" ({job.get('company_size')})"
+                
+                location_info = f"📍 {job.get('location', 'N/A')} • 💼 {job.get('remote_type', 'N/A')}"
+                
+                st.markdown(f"{company_info} • {location_info}")
+                
+                # Industry and domain tags
+                if job.get('industry') or job.get('domain'):
+                    tags = []
+                    if job.get('industry'):
+                        tags.append(f"🏭 {job.get('industry')}")
+                    if job.get('domain'):
+                        tags.append(f"🎯 {job.get('domain')}")
+                    st.markdown(" • ".join(tags))
+            
             with col2:
                 match_score = job.get('match_score', 0)
-                st.metric("Match Score", f"{match_score}%")
+                score_color = "🟢" if match_score > 85 else "🟡" if match_score > 75 else "🔴"
+                st.metric("Match Score", f"{match_score}%", delta=score_color)
             
-            # Salary and details
+            # Salary and posting info
             col1, col2, col3 = st.columns(3)
             with col1:
                 salary_range = f"${job.get('salary_min', 0):,} - ${job.get('salary_max', 0):,}"
                 st.markdown(f"💰 **Salary:** {salary_range}")
             with col2:
-                st.markdown(f"🏭 **Size:** {job.get('company_size', 'N/A')}")
+                st.markdown(f"📅 **Posted:** {job.get('posted_date', 'N/A')}")
             with col3:
-                st.markdown(f"🏷️ **Industry:** {job.get('industry', 'N/A')}")
+                st.markdown(f"⚡ **Type:** {job.get('type', 'Full-time')}")
+            
+            # Key technologies (if available)
+            if job.get('key_technologies'):
+                st.markdown("**🔧 Key Technologies:**")
+                tech_cols = st.columns(min(len(job['key_technologies']), 4))
+                for i, tech in enumerate(job['key_technologies'][:4]):
+                    with tech_cols[i]:
+                        st.code(tech)
             
             # Description
             st.markdown("**Job Description:**")
             st.markdown(job.get('description', 'No description available.'))
             
-            # Requirements and qualifications in columns
+            # Requirements and qualifications in expandable sections
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("**Requirements:**")
-                for req in job.get('requirements', []):
-                    st.markdown(f"• {req}")
+                with st.expander("📋 Requirements"):
+                    for req in job.get('requirements', []):
+                        st.markdown(f"• {req}")
             
             with col2:
-                st.markdown("**Preferred Qualifications:**")
-                for qual in job.get('preferred_qualifications', []):
-                    st.markdown(f"• {qual}")
+                with st.expander("⭐ Preferred Qualifications"):
+                    for qual in job.get('preferred_qualifications', []):
+                        st.markdown(f"• {qual}")
             
             # Match reasons (if resume was provided)
             if job.get('match_reasons'):
-                st.markdown("**🎯 Why this matches your profile:**")
-                for reason in job.get('match_reasons', []):
-                    st.markdown(f"✅ {reason}")
+                with st.expander("🎯 Why this matches your profile"):
+                    for reason in job.get('match_reasons', []):
+                        st.markdown(f"✅ {reason}")
             
             # Benefits
             if job.get('benefits'):
-                with st.expander("📋 Benefits & Perks"):
-                    for benefit in job.get('benefits', []):
-                        st.markdown(f"• {benefit}")
+                with st.expander("🎁 Benefits & Perks"):
+                    benefit_cols = st.columns(2)
+                    for i, benefit in enumerate(job.get('benefits', [])):
+                        with benefit_cols[i % 2]:
+                            st.markdown(f"• {benefit}")
             
             # Action button
             st.button(f"🚀 Apply to {job.get('company', 'Company')}", 
@@ -908,24 +1370,35 @@ def add_sidebar_features():
             )
     
     st.sidebar.markdown("---")
+    st.sidebar.subheader("🏭 Industries Supported")
+    
+    # Show available industries in sidebar
+    with st.sidebar.expander("View All Industries"):
+        for industry, details in INDUSTRIES.items():
+            st.markdown(f"**{industry}**")
+            st.caption(f"{len(details['domains'])} domains available")
+    
+    st.sidebar.markdown("---")
     st.sidebar.subheader("ℹ️ About")
     st.sidebar.info(
         """
         **AI Job Search Assistant v2.0**
         
-        Features:
-        • 📄 ATS-optimized resume analysis
-        • 🔍 Live job scraping from 10+ platforms
-        • 🤖 AI-powered job matching
-        • 📊 Export capabilities
+        **New Features:**
+        • 🏭 10+ Industry categories
+        • 🎯 50+ Domain specializations  
+        • 📊 Enhanced resume analysis
+        • 🔍 Improved job scraping
+        • 🤖 Smarter AI matching
         
         **Data Sources:**
-        • Greenhouse, Lever, Ashby
-        • LinkedIn, Indeed, Remote.co
+        • 15+ ATS platforms
         • Company career pages
+        • Major job boards
+        • Remote job sites
         
-        **Note:** Scraping is performed in real-time. 
-        Heavy usage may result in temporary rate limits.
+        **Note:** Heavy usage may result in 
+        temporary rate limits from search engines.
         """
     )
     
@@ -936,7 +1409,9 @@ def add_sidebar_features():
         st.sidebar.metric("Scraped Jobs", len(st.session_state.scraped_jobs))
         st.sidebar.metric("AI Matches", len(st.session_state.ai_jobs))
         if st.session_state.resume_data:
-            st.sidebar.metric("Resume Loaded", "✅ Yes")
+            st.sidebar.success("✅ Resume Analyzed")
+            industry_fit = st.session_state.resume_data.get('industry_alignment', 0)
+            st.sidebar.metric("Industry Alignment", f"{industry_fit}%")
 
 if __name__ == "__main__":
     # Add custom CSS
@@ -978,6 +1453,14 @@ if __name__ == "__main__":
     .stTabs [data-baseweb="tab"] {
         padding-left: 20px;
         padding-right: 20px;
+    }
+    .industry-tag {
+        background-color: #e3f2fd;
+        color: #1976d2;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.8rem;
+        margin: 0.1rem;
     }
     </style>
     """, unsafe_allow_html=True)
