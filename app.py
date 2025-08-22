@@ -390,23 +390,6 @@ elif page == "Job Search":
                 st.caption(f"**Requirements:** {' • '.join(job.get('requirements', []))}")
                 st.button("Apply Now", key=job['id'], type="primary")
 
-st.header(" B Live Job Search Engine")
-st.write("Enter your desired job title and location details to find live openings from the last 24 hours.")
-
-with st.form("job_search_form"):
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        job_title = st.text_input("Job Title", "Data Analyst")
-    with col2:
-        location_type = st.selectbox(
-            "Location Type",
-            ("Remote", "Onsite", "Hybrid"),
-            help="Select the type of work location."
-        )
-    with col3:
-        location_text = st.text_input("City or State", "New York", help="Required for Onsite/Hybrid searches.")
-
-    submitted = st.form_submit_button(" B Search for Jobs")
 
 if submitted:
     if location_type in ["Onsite", "Hybrid"] and not location_text.strip():
