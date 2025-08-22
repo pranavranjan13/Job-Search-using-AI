@@ -162,18 +162,98 @@ def get_text_from_file(uploaded_file):
         return None
 
 def extract_json_from_response(text):
-    """Safely extracts a JSON object from a string."""
+    """Safely extracts a JSON object from a string with enhanced error handling."""
     try:
+        # Remove markdown code blocks
         text = text.replace('```json', '').replace('```', '').strip()
-        json_start = text.find('{')
-        json_end = text.rfind('}') + 1
         
-        if json_start != -1 and json_end > json_start:
-            json_str = text[json_start:json_end]
-            return json.loads(json_str)
-    except (json.JSONDecodeError, ValueError) as e:
+        # Try to find JSON object boundaries
+        json_start = text.find('{')
+        if json_start == -1:
+            logger.error("No JSON object found in response")
+            return None
+            
+        # Find the matching closing brace
+        brace_count = 0
+        json_end = json_start
+        
+        for i in range(json_start, len(text)):
+            if text[i] == '{':
+                brace_count += 1
+            elif text[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+        
+        if brace_count != 0:
+            logger.error("Unmatched braces in JSON")
+            return None
+            
+        json_str = text[json_start:json_end]
+        
+        # Clean up common JSON issues
+        json_str = clean_json_string(json_str)
+        
+        return json.loads(json_str)
+        
+    except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
+        logger.error(f"Problematic JSON: {text[:500]}...")
+        
+        # Try to fix common JSON issues and retry
+        try:
+            fixed_json = fix_common_json_issues(text)
+            if fixed_json:
+                return json.loads(fixed_json)
+        except:
+            pass
+            
+    except Exception as e:
+        logger.error(f"Unexpected error in JSON extraction: {e}")
+    
     return None
+
+def clean_json_string(json_str):
+    """Clean up common JSON formatting issues."""
+    # Remove trailing commas before closing braces/brackets
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+    
+    # Fix unescaped quotes in strings
+    json_str = re.sub(r'(?<!\\)"(?=.*".*:)', r'\\"', json_str)
+    
+    # Remove any null bytes
+    json_str = json_str.replace('\x00', '')
+    
+    # Fix newlines in string values
+    json_str = re.sub(r':\s*"([^"]*)\n([^"]*)"', r': "\1 \2"', json_str)
+    
+    return json_str
+
+def fix_common_json_issues(text):
+    """Attempt to fix common JSON formatting issues."""
+    try:
+        # Find JSON boundaries again
+        json_start = text.find('{')
+        if json_start == -1:
+            return None
+            
+        # Take everything from first { to last }
+        json_end = text.rfind('}') + 1
+        if json_end <= json_start:
+            return None
+            
+        json_str = text[json_start:json_end]
+        
+        # Fix common issues
+        json_str = clean_json_string(json_str)
+        
+        # Try to validate
+        json.loads(json_str)
+        return json_str
+        
+    except:
+        return None
 
 def call_euri_api(prompt, max_retries=3):
     """Call the EURI API with retry logic."""
@@ -488,78 +568,288 @@ def sort_jobs_by_relevance(jobs, job_title, industry=None):
 
 # --- Resume Analysis Functions ---
 def parse_resume_with_ai(resume_text, selected_industry=None):
-    """Parse resume using AI."""
+    """Parse resume using AI with improved error handling and fallbacks."""
     industry_context = ""
     if selected_industry:
         domains = INDUSTRIES.get(selected_industry, {}).get('domains', [])
-        industry_context = f"Industry Focus: {selected_industry}\nDomains: {', '.join(domains)}"
+        industry_context = f"Industry Focus: {selected_industry}\nRelevant Domains: {', '.join(domains[:5])}"
     
     prompt = f"""
-    Analyze this resume and extract information into JSON format.
+    You are a resume parser. Analyze this resume and extract information into a valid JSON format.
+    
     {industry_context}
     
-    Return JSON with these keys:
-    - "name": string
-    - "email": string  
-    - "phone": string
-    - "location": string
-    - "summary": string
-    - "skills": array of strings
-    - "technical_skills": array of strings  
-    - "experience": array of objects with "title", "company", "duration", "achievements"
-    - "education": array of objects with "degree", "institution", "year"
-    - "certifications": array of strings
-    - "industry_alignment": number (0-100)
+    CRITICAL INSTRUCTIONS:
+    1. Return ONLY a valid JSON object
+    2. Use double quotes for all strings
+    3. Escape any quotes inside string values
+    4. Do not include trailing commas
+    5. Ensure all arrays and objects are properly closed
     
-    Resume:
-    {resume_text}
+    Required JSON structure:
+    {{
+        "name": "Full Name",
+        "email": "email@domain.com",
+        "phone": "phone number",
+        "location": "city, state/country",
+        "summary": "Professional summary in 2-3 sentences",
+        "skills": ["skill1", "skill2", "skill3"],
+        "technical_skills": ["tech1", "tech2"],
+        "experience": [
+            {{
+                "title": "Job Title",
+                "company": "Company Name",
+                "duration": "Start - End dates",
+                "achievements": ["achievement1", "achievement2"]
+            }}
+        ],
+        "education": [
+            {{
+                "degree": "Degree Name",
+                "institution": "School Name",
+                "year": "Graduation Year"
+            }}
+        ],
+        "certifications": ["cert1", "cert2"],
+        "industry_alignment": 75
+    }}
     
-    Return ONLY valid JSON.
+    Resume Text:
+    {resume_text[:3000]}
+    
+    Return ONLY the JSON object with no additional text, explanations, or markdown formatting.
     """
     
-    response = call_euri_api(prompt)
-    if response:
-        parsed = extract_json_from_response(response)
-        if parsed:
-            return parsed
+    # Try multiple times with different approaches
+    for attempt in range(3):
+        try:
+            response = call_euri_api(prompt)
+            if response:
+                # Log the raw response for debugging
+                logger.info(f"AI Response attempt {attempt + 1}: {response[:200]}...")
+                
+                parsed = extract_json_from_response(response)
+                if parsed and validate_resume_data(parsed):
+                    logger.info("Successfully parsed resume with AI")
+                    return parsed
+                else:
+                    logger.warning(f"Failed to parse JSON on attempt {attempt + 1}")
+            
+            # Modify prompt for retry
+            if attempt < 2:
+                prompt = prompt.replace("Return ONLY the JSON object", 
+                                      "Return a simple, valid JSON object without any formatting issues")
+                
+        except Exception as e:
+            logger.error(f"Resume parsing attempt {attempt + 1} failed: {e}")
+    
+    # Fallback: Basic text extraction
+    logger.warning("AI parsing failed, using fallback extraction")
+    return extract_resume_fallback(resume_text, selected_industry)
+
+def validate_resume_data(data):
+    """Validate that parsed resume data has required fields."""
+    required_fields = ['name', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education']
+    
+    if not isinstance(data, dict):
+        return False
+    
+    for field in required_fields:
+        if field not in data:
+            logger.warning(f"Missing required field: {field}")
+            return False
+    
+    # Check that arrays are actually arrays
+    array_fields = ['skills', 'experience', 'education']
+    for field in array_fields:
+        if not isinstance(data.get(field), list):
+            logger.warning(f"Field {field} is not an array")
+            return False
+    
+    return True
+
+def extract_resume_fallback(resume_text, selected_industry=None):
+    """Fallback resume extraction using basic text processing."""
+    logger.info("Using fallback resume extraction")
+    
+    lines = resume_text.split('\n')
+    
+    # Basic extraction
+    name = "Name not found"
+    email = "Email not found"
+    phone = "Phone not found"
+    location = "Location not found"
+    
+    # Look for email
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    email_match = re.search(email_pattern, resume_text)
+    if email_match:
+        email = email_match.group()
+    
+    # Look for phone
+    phone_pattern = r'(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})'
+    phone_match = re.search(phone_pattern, resume_text)
+    if phone_match:
+        phone = phone_match.group()
+    
+    # Extract name (usually first non-empty line)
+    for line in lines[:5]:
+        line = line.strip()
+        if line and len(line) < 50 and not any(char.isdigit() for char in line):
+            name = line
+            break
+    
+    # Basic skills extraction
+    skills_keywords = ['python', 'java', 'javascript', 'sql', 'excel', 'powerbi', 'tableau', 
+                      'project management', 'data analysis', 'machine learning', 'aws', 'azure']
+    found_skills = []
+    resume_lower = resume_text.lower()
+    
+    for skill in skills_keywords:
+        if skill in resume_lower:
+            found_skills.append(skill.title())
     
     return {
-        "name": "Could not extract",
-        "email": "Could not extract", 
-        "phone": "Could not extract",
-        "location": "Could not extract",
-        "summary": resume_text[:200] + "..." if len(resume_text) > 200 else resume_text,
-        "skills": [],
-        "technical_skills": [],
-        "experience": [],
-        "education": [],
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "location": location,
+        "summary": resume_text[:300] + "..." if len(resume_text) > 300 else resume_text,
+        "skills": found_skills,
+        "technical_skills": found_skills[:5],
+        "experience": [{"title": "Experience parsing failed", "company": "Unknown", "duration": "Unknown", "achievements": []}],
+        "education": [{"degree": "Education parsing failed", "institution": "Unknown", "year": "Unknown"}],
         "certifications": [],
-        "industry_alignment": 0
+        "industry_alignment": 50
     }
 
 def generate_resume_insights(resume_data, selected_industry=None):
-    """Generate resume insights using AI."""
+    """Generate resume insights using AI with improved error handling."""
+    industry_context = ""
+    if selected_industry:
+        keywords = INDUSTRIES.get(selected_industry, {}).get('keywords', [])
+        industry_context = f"Target Industry: {selected_industry}\nKey Keywords: {', '.join(keywords[:8])}"
+    
     prompt = f"""
-    Analyze this resume data and provide insights in JSON format:
+    You are a professional resume advisor. Analyze this resume data and provide insights.
     
-    Resume Data: {json.dumps(resume_data, indent=2)}
-    Target Industry: {selected_industry or 'General'}
+    {industry_context}
     
-    Return JSON with these keys:
-    - "ats_score": number (0-100)
-    - "overall_score": number (0-100) 
-    - "strengths": array of strings
-    - "improvements": array of strings
-    - "missing_keywords": array of strings
-    - "recommendations": array of strings
+    Resume Data Summary:
+    - Name: {resume_data.get('name', 'N/A')}
+    - Skills: {len(resume_data.get('skills', []))} skills listed
+    - Experience: {len(resume_data.get('experience', []))} positions
+    - Education: {len(resume_data.get('education', []))} entries
     
-    Return ONLY valid JSON.
+    CRITICAL: Return ONLY a valid JSON object with these exact keys:
+    {{
+        "ats_score": 75,
+        "overall_score": 80,
+        "strengths": ["strength1", "strength2", "strength3"],
+        "improvements": ["improvement1", "improvement2"],
+        "missing_keywords": ["keyword1", "keyword2"],
+        "recommendations": ["rec1", "rec2", "rec3"]
+    }}
+    
+    Guidelines:
+    - ats_score: Rate ATS compatibility (0-100)
+    - overall_score: Overall resume quality (0-100)  
+    - strengths: 3-5 positive aspects
+    - improvements: 2-4 areas to improve
+    - missing_keywords: Industry keywords not found
+    - recommendations: 3-5 specific action items
+    
+    Return ONLY the JSON object with no additional text.
     """
     
-    response = call_euri_api(prompt)
-    if response:
-        return extract_json_from_response(response)
-    return None
+    try:
+        response = call_euri_api(prompt)
+        if response:
+            logger.info(f"Insights AI Response: {response[:200]}...")
+            parsed = extract_json_from_response(response)
+            
+            if parsed and validate_insights_data(parsed):
+                return parsed
+            else:
+                logger.warning("Failed to parse insights JSON, using fallback")
+        
+        # Fallback insights
+        return generate_fallback_insights(resume_data, selected_industry)
+        
+    except Exception as e:
+        logger.error(f"Resume insights generation failed: {e}")
+        return generate_fallback_insights(resume_data, selected_industry)
+
+def validate_insights_data(data):
+    """Validate insights data structure."""
+    required_fields = ['ats_score', 'overall_score', 'strengths', 'improvements', 'recommendations']
+    
+    if not isinstance(data, dict):
+        return False
+    
+    for field in required_fields:
+        if field not in data:
+            logger.warning(f"Missing insights field: {field}")
+            return False
+    
+    # Validate score ranges
+    for score_field in ['ats_score', 'overall_score']:
+        score = data.get(score_field, 0)
+        if not isinstance(score, (int, float)) or not (0 <= score <= 100):
+            logger.warning(f"Invalid score for {score_field}: {score}")
+            return False
+    
+    return True
+
+def generate_fallback_insights(resume_data, selected_industry=None):
+    """Generate basic insights as fallback."""
+    skills_count = len(resume_data.get('skills', []))
+    experience_count = len(resume_data.get('experience', []))
+    
+    # Calculate basic scores
+    ats_score = min(90, 50 + (skills_count * 3) + (experience_count * 10))
+    overall_score = min(95, 60 + (skills_count * 2) + (experience_count * 8))
+    
+    strengths = []
+    if skills_count > 5:
+        strengths.append(f"Strong skill set with {skills_count} listed competencies")
+    if experience_count > 2:
+        strengths.append(f"Solid work history with {experience_count} positions")
+    if resume_data.get('education'):
+        strengths.append("Educational background provided")
+    
+    if not strengths:
+        strengths = ["Resume structure is readable", "Contact information present"]
+    
+    improvements = []
+    if skills_count < 5:
+        improvements.append("Add more relevant skills to strengthen your profile")
+    if experience_count < 2:
+        improvements.append("Include more work experience or projects")
+    if not resume_data.get('certifications'):
+        improvements.append("Consider adding relevant certifications")
+    
+    recommendations = [
+        "Quantify achievements with specific numbers and metrics",
+        "Use action verbs to start bullet points",
+        "Tailor resume keywords to job descriptions",
+        "Keep resume to 1-2 pages maximum"
+    ]
+    
+    missing_keywords = []
+    if selected_industry and selected_industry in INDUSTRIES:
+        industry_keywords = INDUSTRIES[selected_industry]['keywords']
+        resume_text = str(resume_data).lower()
+        missing_keywords = [kw for kw in industry_keywords[:5] if kw not in resume_text]
+    
+    return {
+        "ats_score": ats_score,
+        "overall_score": overall_score,
+        "strengths": strengths[:5],
+        "improvements": improvements[:4],
+        "missing_keywords": missing_keywords,
+        "recommendations": recommendations[:5]
+    }
 
 # --- Chat Function ---
 def chat_about_career(user_message, resume_data=None):
