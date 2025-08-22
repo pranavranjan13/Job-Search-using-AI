@@ -6,17 +6,56 @@ import PyPDF2
 import docx
 
 # --- Page & API Configuration ---
-st.set_page_config(
-    page_title="AI Job Search Assistant",
-    page_icon="🤖",
-    layout="wide"
-)
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Live Job Search Engine",
-    page_icon=" B",
-    layout="wide"
-)
+tab1, tab2 = st.tabs(["AI Job Search Assistant", "Live Job Search Engine"])
+
+with tab1:
+    st.header("AI Job Search Assistant")
+    st.write("Upload your resume and let our AI analyze it for job matching.")
+
+with tab2:
+    st.header("Live Job Search Engine")
+    st.write("Enter your desired job title and location details to find live openings from the last 24 hours.")
+
+    with st.form("job_search_form"):
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            job_title = st.text_input("Job Title", "Data Analyst")
+        with col2:
+            location_type = st.selectbox(
+                "Location Type",
+                ("Remote", "Onsite", "Hybrid"),
+                help="Select the type of work location."
+            )
+        with col3:
+            location_text = st.text_input("City or State", "New York", help="Required for Onsite/Hybrid searches.")
+
+        submitted = st.form_submit_button("Search for Jobs")
+
+    if submitted:
+        if location_type in ["Onsite", "Hybrid"] and not location_text.strip():
+            st.error("Please provide a city or state for Onsite/Hybrid searches.")
+        else:
+            with st.spinner("Scraping the web for live job listings... This may take a moment."):
+                found_jobs = run_scrapers(job_title, location_type, location_text)
+
+                if found_jobs:
+                    st.success(f"Found {len(found_jobs)} unique job listings!")
+                    for job in found_jobs:
+                        with st.container(border=True):
+                            st.subheader(job['title'])
+                            st.caption(f"Source: {job['source']}")
+                            st.write(job['snippet'])
+                            st.link_button("View and Apply", job['link'])
+                else:
+                    st.warning("No job listings found matching your criteria from the last 24 hours. Try broadening your search.")
+
+    st.sidebar.title("About")
+    st.sidebar.info(
+        "This application scrapes live job data from Google using advanced search queries. "
+        "It is a proof-of-concept and demonstrates how to aggregate job listings from various Applicant Tracking Systems (ATS). "
+        "**Note:** Scraping is performed in real-time. Frequent use may lead to temporary IP blocks from Google."
+    )
+
 
 
 # EURI API Configuration from the provided context
